@@ -11,7 +11,7 @@ def parse():
     lengths = []
     speaker = []
     dialogues = []
-    for dia in tqdm(dataset['validation']['turns'], desc='Parsing MultiWOZ'):
+    for dia in tqdm(dataset['train']['turns'], desc='Parsing MultiWOZ'):
         utterances.extend(dia['utterance'])
         lengths.append(len(dia['utterance']))
         speaker.extend(dia['speaker'])
