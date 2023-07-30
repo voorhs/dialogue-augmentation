@@ -9,6 +9,7 @@ from sklearn.feature_extraction.text import TfidfVectorizer
 from redlines import Redlines
 from IPython.display import Markdown, display
 
+
 def assign_cluster_names(labels, texts) -> list[str]:
     n_clusters = len(np.unique(labels))    
 
@@ -79,8 +80,17 @@ def read_csv(path) -> list[str]:
         f.readline() # row with column names
         for line in f.readlines():
             utter = ','.join(line.split(',')[1:])
-            res.append(utter.replace('"', ''))
+            res.append(utter.replace('"', '').strip())
     return res
+
+
+def get_dialogue(i, name) -> list[str]:
+    original = read_csv('aug-data/original.csv')
+    rle = json.load(open('aug-data/rle.json', 'r'))
+    start = sum(rle[:i])
+    end = start + rle[i]
+    return original[start:end]
+
 
 def show_augmented(i, name) -> None:
     """
