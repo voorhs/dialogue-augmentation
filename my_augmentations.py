@@ -40,7 +40,7 @@ class Inserter:
             fraction=0.1,
             score_threshold=0.005,
             k=5,
-            mask_utterance_level=True,
+            mask_utterance_level=False,
             fill_utterance_level=True,
             model='xlnet-base-cased',
             device='cpu',
@@ -53,7 +53,7 @@ class Inserter:
         - score_thresold: float, lower bound for probability of filled token
         - k: int, parameter for topk sampling
         - mask_utterance_level: bool, whether to mask dialogues as whole or mask each utterance separately
-        - fill_utterance_level: bool, whether to fill masks in dialogues as whole or process each utterance separately
+        - fill_utterance_level: bool or int > 1, whether to fill masks in dialogues as whole or process each utterance separately or use context of previous utterances
         - model: str, fill-mask model from hugging face
         - forbidden_tokens: list[str], list of all tokens which won't be used as insertions
         """
@@ -72,9 +72,18 @@ class Inserter:
             forbidden_tokens.extend(AutoTokenizer.from_pretrained(self.model).all_special_tokens)
         self.forbidden_tokens = forbidden_tokens
 
+    def _insert(self, words):
+        """Insert <mask> after each space"""
+        n = len(words)
+        size = np.ceil(n * self.fraction).astype(int)
+        i_places = np.sort(np.random.choice(n, size=size, replace=False)) + np.arange(size)
+        for i in i_places:
+            words.insert(i, '<mask>')
+        return words
+
     def _insert_masks_dialogue_level(self, dialogues) -> List[str]:
         """
-        Insert <mask> into random places of dialogues from 'aug-data/original.csv'
+        Insert <mask> into random places of dialogues
 
         Params
         ------
@@ -88,25 +97,15 @@ class Inserter:
         res = []
         
         for dia in dialogues:
-            # concat utterances into single string
             original = '\n'.join(dia)
-
-            # insert masked token after each space
-            words = original.split(' ')
-            n = len(words)
-            size = np.ceil(n * self.fraction).astype(int)
-            i_places = np.sort(np.random.choice(n, size=size)) + np.arange(size)
-            for i in i_places:
-                words.insert(i, '<mask>')
-            
-            # concat words
+            words = self._insert(original.split(' '))
             res.append(' '.join(words))
         
         return res
 
     def _insert_masks_utterance_level(self, dialogues) -> List[str]:
         """
-        Insert <mask> into random places of dialogues from 'aug-data/original.csv'
+        Insert <mask> into random places of dialogues
 
         Params
         ------
@@ -122,28 +121,48 @@ class Inserter:
         for dia in dialogues:
             masked = []
             for ut in dia:
-                # insert <mask> after each space
-                words = ut.split(' ')
-                n = len(words)
-                size = np.ceil(n * self.fraction).astype(int)
-                i_places = np.random.choice(n, size=size) + np.arange(size)
-                for i in i_places:
-                    words.insert(i, '<mask>')
-
-                # concat words
+                words = self._insert(ut.split(' '))
                 masked.append(' '.join(words))
                 
             res.append('\n'.join(masked))
         
         return res
 
-    def _is_not_forbidden(self, word) -> bool:
+    def _is_not_forbidden(self, word: str) -> bool:
         word = word.lower()
         flags = []
         flags.append(word in self.forbidden_tokens)
-        flags.append(word in string.whitespace)
-        flags.append(word in string.punctuation)
+        flags.append(not word.isalpha())
         return not any(flags)
+
+    def _choose_confident(self, fill_res):
+        """Drop predicted tokens which have low score or are included into forbidden tokens."""
+        words = []
+        scores = []
+        for word, score in map(lambda x: (x['token_str'], x['score']), fill_res):
+            if len(words) == self.k:
+                break
+            if score < self.score_threshold:
+                continue
+            if self._is_not_forbidden(word):
+                words.append(word)
+                scores.append(score)
+        return words, scores
+    
+    def _replace_masks(self, text, outputs):
+        """Replace <mask> with predicted tokens."""
+        for words, scores in outputs:
+            i = text.find('<mask>')
+            if len(words) == 0:
+                if text[i-1] == ' ':
+                    text = text[:i-1] + text[i+6:]
+                else:
+                    text = text[:i] + text[i+7:]
+            else:
+                probs = np.array(scores) / sum(scores)
+                to_insert = words[int(np.random.choice(len(words), 1, p=probs))]
+                text = text[:i] + to_insert + text[i+6:]
+        return text
 
     def _fill_masks_dialogue_level(self, masked_dialogues) -> List[str]:
         """
@@ -163,33 +182,10 @@ class Inserter:
         res = []
         for dia in masked_dialogues:
             # choose only confident predictions
-            outputs = []
-            for fill_res in mask_filler(dia, top_k=1000):
-                words = []
-                scores = []
-                for word, score in map(lambda x: (x['token_str'], x['score']), fill_res):
-                    if len(words) == self.k:
-                        break
-                    if score < self.score_threshold:
-                        continue
-                    if self._is_not_forbidden(word):
-                        words.append(word)
-                        scores.append(score)
-                outputs.append((words, scores))
+            outputs = [self._choose_confident(fill_res) for fill_res in mask_filler(dia, top_k=1000)]
+                
             # insert predictions
-            for words, scores in outputs:
-                i = dia.find('<mask>')
-                if len(words) == 0:
-                    if dia[i-1] == ' ':
-                        dia = dia[:i-1] + dia[i+6:]
-                    else:
-                        dia = dia[:i] + dia[i+7:]
-                else:
-                    probs = np.array(scores) / sum(scores)
-                    to_insert = words[int(np.random.choice(len(words), 1, p=probs))]
-                    dia = dia[:i] + to_insert + dia[i+6:]
-            
-            res.extend(dia.split('\n'))
+            res.extend(self._replace_masks(dia, outputs).split('\n'))
         
         return res
 
@@ -222,36 +218,51 @@ class Inserter:
                 if isinstance(all_masks[0], dict):
                     # in case there's single mask in utterance
                     all_masks = [all_masks]
-                options = []
-                for fill_res in all_masks:
-                    words = []
-                    scores = []
-                    for word, score in map(lambda x: (x['token_str'], x['score']), fill_res):
-                        if len(words) == self.k:
-                            break
-                        if score < self.score_threshold:
-                            continue
-                        if self._is_not_forbidden(word):
-                            words.append(word)
-                            scores.append(score)
-                    options.append((words, scores))
-                outputs.append(options)
+                outputs.append([self._choose_confident(fill_res) for fill_res in all_masks])
+            
+            # insert predictions
+            res.extend([self._replace_masks(ut, options) for ut, options in zip(dia, outputs)])
+
+        return res
+    
+    def _fill_masks_context_level(self, masked_dialogues, context_length) -> List[str]:
+        """
+        Apply MLM to fill <mask> in given dialogues.
+
+        Params
+        ------
+        - masked_dialogues: list of dialogues, where each dialogue is a single string with \\n delimiter between utterances
+
+        Return
+        ------
+        list of utterances merged into single list
+        """
+
+        mask_filler = pipeline('fill-mask', model=self.model, device=self.device)
+        
+        res = []
+        for dia in masked_dialogues:
+            dia = dia.split('\n')
+            context_list = []
+            for i in range(0, len(dia), context_length):
+                context_list.append('\n'.join(dia[i:i+context_length]))
+            
+            # choose only confident predictions
+            outputs = []
+            for context in context_list:
+                if context.find('<mask>') == -1:
+                    outputs.append([])
+                    continue
+                all_masks = mask_filler(context, top_k=1000)
+                if isinstance(all_masks[0], dict):
+                    # in case there's single mask in context
+                    all_masks = [all_masks]
+                outputs.append([self._choose_confident(fill_res) for fill_res in all_masks])
             
             # insert predictions
             filled = []
-            for ut, options in zip(dia, outputs):
-                for words, scores in options:
-                    i = ut.find('<mask>')
-                    if len(words) == 0:
-                        if ut[i-1] == ' ' and i != 0:
-                            ut = ut[:i-1] + ut[i+6:]
-                        else:
-                            ut = ut[:i] + ut[i+7:]
-                    else:
-                        probs = np.array(scores) / sum(scores)
-                        to_insert = words[int(np.random.choice(len(words), 1, p=probs))]
-                        ut = ut[:i] + to_insert + ut[i+6:]
-                filled.append(ut)
+            for context, options in zip(context_list, outputs):
+                filled.extend(self._replace_masks(context, options).split('\n'))
             
             res.extend(filled)
 
@@ -283,7 +294,9 @@ class Inserter:
         else:
             masked = self._insert_masks_dialogue_level(dialogues)
         
-        if self.fill_utterance_level:
+        if not isinstance(self.fill_utterance_level, bool):
+            filled = self._fill_masks_context_level(masked, self.fill_utterance_level)
+        elif self.fill_utterance_level:
             filled = self._fill_masks_utterance_level(masked)
         else:
             filled = self._fill_masks_dialogue_level(masked)
@@ -310,9 +323,50 @@ class Inserter:
         else:
             masked = self._insert_masks_dialogue_level(dialogues)
         
-        if self.fill_utterance_level:
+        if isinstance(self.fill_utterance_level, int):
+            filled = self._fill_masks_context_level(masked, self.fill_utterance_level)
+        elif self.fill_utterance_level:
             filled = self._fill_masks_utterance_level(masked)
         else:
             filled = self._fill_masks_dialogue_level(masked)
         
         return filled
+
+
+class Replacer(Inserter):
+    def __init__(
+            self,
+            k=3,
+            fill_utterance_level=True,
+            model='xlnet-base-cased',
+            device='cpu',
+            forbidden_tokens=None
+        ):
+        super().__init__(
+            fraction=1,
+            score_threshold=0,
+            k=k,
+            mask_utterance_level=False,
+            fill_utterance_level=fill_utterance_level,
+            model=model,
+            device=device,
+            forbidden_tokens=forbidden_tokens
+        )
+        self.replaced_tokens = []
+
+    def _insert(self, words):
+        for i, word in enumerate(words):
+            if self._is_not_forbidden(word):
+                self.replaced_tokens.append(word)
+                words[i] = '<mask>'
+        return words
+    
+    def _replace_masks(self, text, outputs):
+        for words, scores in outputs:
+            i = text.find('<mask>')
+            to_insert = self.replaced_tokens.pop(0)
+            if len(words) > 0:
+                probs = np.array(scores) / sum(scores)
+                to_insert = words[int(np.random.choice(len(words), 1, p=probs))]
+            text = text[:i] + to_insert + text[i+6:]
+        return text

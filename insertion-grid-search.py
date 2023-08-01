@@ -14,11 +14,11 @@ from transformers import AutoTokenizer
 
 search_space = {
     'fraction': [0.1, 0.2, 0.3, 0.4, 0.5],
-    'score_threshold': [0.005, 0.007, 0.01],
+    'score_threshold': [0, 0.002, 0.005, 0.01, 0.013],
     'k': [1, 3, 5],
     'mask_utterance_level': [False, True],
     'fill_utterance_level': [False, True],
-    'model': ['xlnet-base-cased', 'xlnet-large-cased', 'sentence-transformers/all-mpnet-base-v2']
+    'model': ['xlnet-base-cased', 'xlnet-large-cased']
 }
 
 
@@ -41,9 +41,9 @@ def statistics(trial: optuna.trial.Trial):
         device='cuda',
         **hyperparams
     )
-    total_time = time() - begin
     dialogues = inserter._get_dialogues()
     augmented = inserter.from_argument(dialogues)
+    total_time = time() - begin
     vectors_augmented = cv(augmented, rle, speaker, clusterer)
     similarities = cs(vectors_augmented, vectors_original)
 
@@ -67,10 +67,11 @@ def start_gridsearch(n_jobs, seed=0):
         sampler=GridSampler(search_space, seed=seed),
         directions=['maximize', 'maximize', 'maximize', 'minimize'],
         study_name=study_name,
-        storage=storage_name
+        storage=storage_name,
+        load_if_exists=True
     )
     # n_trials is equal to number of all possible hparams combinations
-    n_trials = 11
+    n_trials = 1
     for val in search_space.values():
         if isinstance(val, list):
             n_trials *= len(val)
