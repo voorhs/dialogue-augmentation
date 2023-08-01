@@ -8,6 +8,7 @@ import nltk
 from nltk.corpus import stopwords
 from transformers import AutoTokenizer
 import string
+from typing import List
 
 
 def back_translate(name='back_trans_hf'):
@@ -34,45 +35,67 @@ def back_translate(name='back_trans_hf'):
 
 
 class Inserter:
-    def __init__(self, fraction=0.1, score_threshold=0.005, k=5, utterance_level=True):
+    def __init__(
+            self,
+            fraction=0.1,
+            score_threshold=0.005,
+            k=5,
+            mask_utterance_level=True,
+            fill_utterance_level=True,
+            model='xlnet-base-cased',
+            device='cpu',
+            forbidden_tokens=None
+        ):
         """
         Params
         ------
         - fraction: float in (0,1), fraction of words by which to increase the length of the dialogues
         - score_thresold: float, lower bound for probability of filled token
         - k: int, parameter for topk sampling
-        - utterance_level: bool, whether to mask dialogues as whole or mask each utterance separately
+        - mask_utterance_level: bool, whether to mask dialogues as whole or mask each utterance separately
+        - fill_utterance_level: bool, whether to fill masks in dialogues as whole or process each utterance separately
+        - model: str, fill-mask model from hugging face
+        - forbidden_tokens: list[str], list of all tokens which won't be used as insertions
         """
 
         self.fraction = fraction
         self.score_threshold = score_threshold
         self.k = k
-        self.utterance_level = utterance_level
+        self.mask_utterance_level = mask_utterance_level
+        self.fill_utterance_level = fill_utterance_level
+        self.model = model
+        self.device = device
 
-        nltk.download('stopwords')
-        self.stopwords_list = stopwords.words('english')
-        self.special = AutoTokenizer.from_pretrained('xlnet-base-cased').all_special_tokens
+        if forbidden_tokens is None:
+            nltk.download('stopwords')
+            forbidden_tokens = stopwords.words('english')
+            forbidden_tokens.extend(AutoTokenizer.from_pretrained(self.model).all_special_tokens)
+        self.forbidden_tokens = forbidden_tokens
 
-    def _insert_masks_dialogue_level(self) -> list[str]:
+    def _insert_masks_dialogue_level(self, dialogues) -> List[str]:
         """
         Insert <mask> into random places of dialogues from 'aug-data/original.csv'
+
+        Params
+        ------
+        - dialogues: list[list[str]] 
 
         Return
         ------
         list of dialogues, where each dialogue is a single string with \\n delimiter between utterances
         """
+
         res = []
-        n_dialogues = len(json.load(open('aug-data/rle.json', 'r')))
         
-        for i in range(n_dialogues):
+        for dia in dialogues:
             # concat utterances into single string
-            original = '\n'.join(get_dialogue(i, 'original'))
+            original = '\n'.join(dia)
 
             # insert masked token after each space
             words = original.split(' ')
             n = len(words)
             size = np.ceil(n * self.fraction).astype(int)
-            i_places = np.random.choice(n, size=size) + np.arange(size)
+            i_places = np.sort(np.random.choice(n, size=size)) + np.arange(size)
             for i in i_places:
                 words.insert(i, '<mask>')
             
@@ -81,22 +104,24 @@ class Inserter:
         
         return res
 
-    def _insert_masks_utterance_level(self) -> list[list[str]]:
+    def _insert_masks_utterance_level(self, dialogues) -> List[str]:
         """
         Insert <mask> into random places of dialogues from 'aug-data/original.csv'
 
+        Params
+        ------
+        - dialogues: list[list[str]] 
+
         Return
         ------
-        list of dialogues, where each dialogue is list of strings (utterances)
+        list of dialogues, where each dialogue is a single string with \\n delimiter between utterances
         """
 
         res = []
-        n_dialogues = len(json.load(open('aug-data/rle.json', 'r')))
 
-        for i in range(n_dialogues):
-            original = get_dialogue(i, 'original')
+        for dia in dialogues:
             masked = []
-            for ut in original:
+            for ut in dia:
                 # insert <mask> after each space
                 words = ut.split(' ')
                 n = len(words)
@@ -108,29 +133,32 @@ class Inserter:
                 # concat words
                 masked.append(' '.join(words))
                 
-            res.append(masked)
+            res.append('\n'.join(masked))
         
         return res
 
     def _is_not_forbidden(self, word) -> bool:
         word = word.lower()
         flags = []
-        flags.append(word in self.stopwords_list)
-        flags.append(word in self.special)
+        flags.append(word in self.forbidden_tokens)
         flags.append(word in string.whitespace)
         flags.append(word in string.punctuation)
         return not any(flags)
 
-    def _fill_masks_dialogue_level(self, masked_dialogues) -> list[str]:
+    def _fill_masks_dialogue_level(self, masked_dialogues) -> List[str]:
         """
         Apply MLM to fill <mask> in given dialogues.
 
         Params
         ------
         - masked_dialogues: list of utterances
+
+        Return
+        ------
+        list of utterances merged into single list
         """
 
-        mask_filler = pipeline('fill-mask', model='xlnet-base-cased')
+        mask_filler = pipeline('fill-mask', model=self.model, device=self.device)
         
         res = []
         for dia in masked_dialogues:
@@ -165,19 +193,25 @@ class Inserter:
         
         return res
 
-    def _fill_masks_utterance_level(self, masked_dialogues) -> list[str]:
+    def _fill_masks_utterance_level(self, masked_dialogues) -> List[str]:
         """
         Apply MLM to fill <mask> in given dialogues.
 
         Params
         ------
-        - masked_dialogues: list of dialogues, where each dialogue is list of strings (utterances)
+        - masked_dialogues: list of dialogues, where each dialogue is a single string with \\n delimiter between utterances
+
+        Return
+        ------
+        list of utterances merged into single list
         """
 
-        mask_filler = pipeline('fill-mask', model='xlnet-base-cased')
+        mask_filler = pipeline('fill-mask', model=self.model, device=self.device)
         
         res = []
         for dia in masked_dialogues:
+            dia = dia.split('\n')
+
             # choose only confident predictions
             outputs = []
             for ut in dia:
@@ -220,18 +254,62 @@ class Inserter:
 
         return res
 
-    def __call__(self, name):
+    def _get_dialogues(self) -> List[List[str]]:
+        rle = json.load(open('aug-data/rle.json', 'r'))
+        utterances = read_csv('aug-data/original.csv')
+        res = []
+        for i in range(len(rle)):
+            start = sum(rle[:i])
+            end = start + rle[i]
+            res.append(utterances[start:end])
+        return res
+
+    def from_file_system(self, name):
+        """
+        Add words to random places of dialogues.
+        
+        Reads data from from 'aug-data/original.csv'. Saves result to f'aug-data/{name}.csv'.
+        """
+
+        # load data
+        dialogues = self._get_dialogues()
+
+        # perform masking and insertion
+        if self.mask_utterance_level:
+            masked = self._insert_masks_utterance_level(dialogues)
+        else:
+            masked = self._insert_masks_dialogue_level(dialogues)
+        
+        if self.fill_utterance_level:
+            filled = self._fill_masks_utterance_level(masked)
+        else:
+            filled = self._fill_masks_dialogue_level(masked)
+        
+        # save result
+        df = pd.DataFrame({'text': filled})
+        df.to_csv(f'aug-data/{name}.csv')
+    
+    def from_argument(self, dialogues):
         """
         Add words to random places of dialogues from 'aug-data/original.csv'.
 
-        Params:
-        - name: str, name of output .csv file
-        """
-        if self.utterance_level:
-            res = self._fill_masks_utterance_level(self._insert_masks_utterance_level())
-        else:
-            res = self._fill_masks_dialogue_level(self._insert_masks_dialogue_level())
-        
+        Params
+        ------
+        - dialogues: list[list[str]]
 
-        df = pd.DataFrame({'text': res})
-        df.to_csv(f'aug-data/{name}.csv')
+        Return
+        ------
+        list of utterances merged into single list
+        """
+
+        if self.mask_utterance_level:
+            masked = self._insert_masks_utterance_level(dialogues)
+        else:
+            masked = self._insert_masks_dialogue_level(dialogues)
+        
+        if self.fill_utterance_level:
+            filled = self._fill_masks_utterance_level(masked)
+        else:
+            filled = self._fill_masks_dialogue_level(masked)
+        
+        return filled

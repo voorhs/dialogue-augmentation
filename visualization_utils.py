@@ -8,9 +8,11 @@ import pandas as pd
 from sklearn.feature_extraction.text import TfidfVectorizer
 from redlines import Redlines
 from IPython.display import Markdown, display
+from typing import List
+from sentence_encoding import sentence_encoder
 
 
-def assign_cluster_names(labels, texts) -> list[str]:
+def assign_cluster_names(labels, texts) -> List[str]:
     n_clusters = len(np.unique(labels))    
 
     cluster_utterances = []
@@ -73,7 +75,7 @@ def show_clusters(is_system) -> None:
     fig.show()
 
 
-def read_csv(path) -> list[str]:
+def read_csv(path) -> List[str]:
     """Read text from .csv file with two columns: index, text. This function is necessary because of how weirdly pandas saves texts."""
     res = []
     with open(path, 'r') as f:
@@ -84,7 +86,7 @@ def read_csv(path) -> list[str]:
     return res
 
 
-def get_dialogue(i, name) -> list[str]:
+def get_dialogue(i, name) -> List[str]:
     original = read_csv('aug-data/original.csv')
     rle = json.load(open('aug-data/rle.json', 'r'))
     start = sum(rle[:i])
