@@ -215,6 +215,9 @@ class Inserter:
             # choose only confident predictions
             outputs = []
             for ut in dia:
+                if ut.find('<mask>') == -1:
+                    outputs.append([])
+                    continue
                 all_masks = mask_filler(ut, top_k=1000)
                 if isinstance(all_masks[0], dict):
                     # in case there's single mask in utterance
