@@ -23,9 +23,10 @@ def get_dialogues() -> List[List[str]]:
 
 
 class BackTranslator:
-    def __init__(self, language):
+    def __init__(self, language, forbidden_tokens=None, device='cpu'):
         self.language = language
-    
+        self.device = device
+
     def from_file_system(self, name='back_trans_hf'):
         """
         Params
@@ -34,13 +35,13 @@ class BackTranslator:
         """
 
         # to french
-        translator = pipeline('translation_en_to_fr', model=f'Helsinki-NLP/opus-mt-en-{self.language}', device='cuda')
+        translator = pipeline('translation_en_to_fr', model=f'Helsinki-NLP/opus-mt-en-{self.language}', device=self.device)
         original = read_csv('aug-data/original.csv')
         translated = [a['translation_text'] for a in translator(original)]
         del translator
 
         # back to english
-        translator = pipeline('translation_fr_to_en', model=f'Helsinki-NLP/opus-mt-{self.language}-en', device='cuda')
+        translator = pipeline('translation_fr_to_en', model=f'Helsinki-NLP/opus-mt-{self.language}-en', device=self.device)
         back_translated = [a['translation_text'] for a in translator(translated)]
         del translator
 
@@ -56,7 +57,7 @@ class BackTranslator:
         """
 
         # to french
-        translator = pipeline('translation_en_to_fr', model=f'Helsinki-NLP/opus-mt-en-{self.language}', device='cuda')
+        translator = pipeline('translation_en_to_fr', model=f'Helsinki-NLP/opus-mt-en-{self.language}', device=self.device)
         original = []
         for dia in dialogues:
             original.extend(dia)
@@ -64,7 +65,7 @@ class BackTranslator:
         del translator
 
         # back to english
-        translator = pipeline('translation_fr_to_en', model=f'Helsinki-NLP/opus-mt-{self.language}-en', device='cuda')
+        translator = pipeline('translation_fr_to_en', model=f'Helsinki-NLP/opus-mt-{self.language}-en', device=self.device)
         back_translated = [a['translation_text'] for a in translator(translated)]
 
         return back_translated
