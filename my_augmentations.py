@@ -298,19 +298,37 @@ class Inserter:
             # join consequetive utterances into single string
             context_list.extend(['\n'.join(dia[i:i+context_length]) for i in range(0, len(dia), context_length)])
 
+        # separate those with and without <mask>
+        i_cont_without_mask = []
+        cont_with_mask = []
+        for i, ut in enumerate(context_list):
+            if ut.find('<mask>') == -1:
+                i_cont_without_mask.append(i)
+            else:
+                cont_with_mask.append(ut)
+
         # feed to MLM
         mask_filler = pipeline('fill-mask', model=self.model, device=self.device)
-        dataset_fill_results = mask_filler(context_list, top_k=1000)
+        dataset_fill_results = mask_filler(cont_with_mask, top_k=1000)
         
-        # insert predictions to utterances with <mask>
+        # insert predictions to contexts with <mask>
         res = []
-        for context, context_fill_results in zip(context_list, dataset_fill_results):
+        for context, context_fill_results in zip(cont_with_mask, dataset_fill_results):
             if isinstance(context_fill_results[0], dict):
                 context_fill_results = [context_fill_results]
             candidates = [self._choose_confident(mask_fill_results) for mask_fill_results in context_fill_results]
-            res.extend(self._replace_masks(context, candidates).split('\n'))
+            res.append(self._replace_masks(context, candidates))
 
-        return res
+        # merge masked and untouched utterances
+        for i in i_cont_without_mask:
+            res.insert(i, context_list[i])
+        
+        # roll out contexts
+        res_uts = []
+        for context in res:
+            res_uts.extend(context.split('\n'))
+
+        return res_uts
 
     def from_file_system(self, name):
         """

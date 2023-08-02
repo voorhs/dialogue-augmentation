@@ -34,18 +34,17 @@ inserter_search_space = {
 
 replacer_search_space = {
     'k': [1, 3, 5, 10],
-    'mask_utterance_level': [False],
     'fill_utterance_level': [True, 2, 3, 4],
     'model': ['microsoft/mpnet-base']
 }
 
 back_translator_search_space = {
     'language': [
-        'am', 'ar', 'eu', 'bn', 'bg', 'ca', 'hr', 'cs', 'da', 'nl',
-        'et', 'fi', 'fr', 'de', 'el', 'gu', 'iw', 'hi', 'hu',
-        'is', 'id', 'it', 'ja', 'kn', 'ko', 'lv', 'lt', 'ms', 'ml',
-        'mr', 'no', 'pl', 'ro', 'ru', 'sr', 'sk', 'sl', 'es', 'sw',
-        'sv', 'ta', 'te', 'th', 'tr', 'ur', 'uk', 'vi', 'cy']
+        'ar', 'eu', 'bg', 'ca', 'cs', 'da', 'nl',
+        'et', 'fi', 'fr', 'de', 'hi', 'hu', 'is',
+        'id', 'it', 'ml', 'mr', 'ru', 'sk', 'es',
+        'sv', 'ur', 'uk', 'vi', 'cy'
+    ]
 }
 
 
