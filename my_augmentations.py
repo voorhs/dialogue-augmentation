@@ -422,3 +422,31 @@ class Replacer(Inserter):
                 to_insert = words[int(np.random.choice(len(words), 1, p=probs))]
             text = text[:i] + to_insert + text[i+6:]
         return text
+
+
+if __name__ == "__main__":
+
+    inserter = Inserter(
+        fraction=0.5,
+        score_threshold=0.005,
+        k=5,
+        mask_utterance_level=True,
+        fill_utterance_level=2,
+        model='microsoft/mpnet-base',
+        device='cuda'
+    )
+    inserter.from_file_system('inserter')
+    
+    replacer = Replacer(
+        k=3,
+        fill_utterance_level=2,
+        model='microsoft/mpnet-base',
+        device='cuda'
+    )
+    replacer.from_file_system('replacer')
+
+    back_translator = BackTranslator(
+        language='ru',
+        device='cuda'
+    )
+    back_translator.from_file_system('back_translator')

@@ -118,7 +118,7 @@ def show_augmented(i, name) -> None:
     display(Markdown(Redlines(orig, aug).output_markdown))
 
 
-def show_similarities(i, name, func):
+def show_similarities(i, name, func, display_mkdown=True, return_mkdown=False):
     """
     Show difference between original dialogue and augmented with cluster name provided for each utterance and dialogues similarity.
     
@@ -158,15 +158,30 @@ def show_similarities(i, name, func):
     # load vectorizations
     orig_vecs = np.load(f'aug-data/vectors-original.npy')[i]
     aug_vecs = np.load(f'aug-data/vectors-{name}.npy')[i]
-    print('similarity:', func(orig_vecs, aug_vecs))
+    intent_similarity = func(orig_vecs, aug_vecs)
 
     # display some edit distance
     orig_txt = ' '.join(orig_txt)
     aug_txt = ' '.join(aug_txt)
-    dist1 = distance(orig_txt, aug_txt)
-    dist2 = ratio(orig_txt, aug_txt)
-    dist3 = jaro(orig_txt, aug_txt)
-    print(f'levenstein={dist1}, ratio={dist2}, jaro={dist3}')
+    levenstein = distance(orig_txt, aug_txt)
+    similarity_ratio = ratio(orig_txt, aug_txt)
+    similarity_jaro = jaro(orig_txt, aug_txt)
 
     mkdown = Redlines('\n'.join(orig), '\n'.join(aug)).output_markdown
-    display(Markdown(mkdown))
+    mkdown = f'{intent_similarity=:.3f}, {levenstein=}, {similarity_ratio=:.3f}, {similarity_jaro=:.3f}\n\n' + mkdown
+    
+    if display_mkdown:
+        display(Markdown(mkdown))
+
+    if return_mkdown:
+        return mkdown
+
+
+def make_demo(name, func, n_dialogues=15):
+    """Save all aug visualisations to .md file"""
+    res = f"# Demo of {name}\n"
+    for i in range(n_dialogues):
+        mkdown = show_similarities(i, name, func, display_mkdown=False, return_mkdown=True)
+        res += f'## {i}-th dialogue\n{mkdown}\n'
+    with open(f'aug-data/demo-{name}.md', 'w') as f:
+        f.write(res)

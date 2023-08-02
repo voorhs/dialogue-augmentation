@@ -1,22 +1,18 @@
 # Dialogue Augmentation
 
-## Примеры аугментаций
-
-- вставка stop utterances -- LLM, корпус пар
-- переписывание (utters / dialog) - стиль -- LLM (попробовать ChatGPT API в гугл колабе)
-- переписывание (utters / dialog) - длина -- LLM
-- переписывание (utters / dialog) - по другому -- LLM
-- **синонимы** (отдельные слова или фразы) -- MLM
-- **перевод** -- MT
-- utter -> emb -> utter' -- MPNet
-- dialog -> emb -> utter -- ConveRT
-- ? utter-> intent -> utter -- классификатор
-- ? utter -> emb -> img -> img -> emb -> utter
-
-## Datasets
-
-- MultiWOZ
-- AugESC ([ссыла на hf](https://huggingface.co/datasets/thu-coai/augesc))
+Структура репы:
+- скрипты для DGAC кластеризации:
+    - `parse_multiwoz.py`
+    - `sentence_encoding.py`
+    - `dgac_clustering.py`
+- реализованные аугментации:
+    - `my_augmentations.py`
+    - `augmentation_development.ipynb`
+- скрипты для анализа intent similarity и edit similarity:
+    - `grid-search.py`
+    - `similarity_funtions.py`
+    - `visualization_utis.py`
+    - `similarity_analysis.ipynb`
 
 ## Текущие мысли
 
