@@ -11,27 +11,60 @@ import string
 from typing import List
 
 
-def back_translate(name='back_trans_hf'):
-    """
-    Params
-    ------
-    - name: str, name of output .csv file
-    """
+def get_dialogues() -> List[List[str]]:
+    rle = json.load(open('aug-data/rle.json', 'r'))
+    utterances = read_csv('aug-data/original.csv')
+    res = []
+    for i in range(len(rle)):
+        start = sum(rle[:i])
+        end = start + rle[i]
+        res.append(utterances[start:end])
+    return res
 
-    # to french
-    translator = pipeline('translation_en_to_fr', device='cuda:0')
-    original = read_csv('aug-data/original.csv')
-    translated = [a['translation_text'] for a in translator(original)]
-    del translator
 
-    # back to english
-    translator = pipeline('translation_fr_to_en', model='Helsinki-NLP/opus-mt-fr-en', device='cuda:0')
-    back_translated = [a['translation_text'] for a in translator(translated)]
-    del translator
+class BackTranslator:
+    def from_file_system(self, name='back_trans_hf'):
+        """
+        Params
+        ------
+        - name: str, name of output .csv file
+        """
 
-    # save to csv
-    df = pd.DataFrame({'text': back_translated})
-    df.to_csv(f'aug-data/{name}.csv')
+        # to french
+        translator = pipeline('translation_en_to_fr', model='Helsinki-NLP/opus-mt-en-fr', device='cuda')
+        original = read_csv('aug-data/original.csv')
+        translated = [a['translation_text'] for a in translator(original)]
+        del translator
+
+        # back to english
+        translator = pipeline('translation_fr_to_en', model='Helsinki-NLP/opus-mt-fr-en', device='cuda')
+        back_translated = [a['translation_text'] for a in translator(translated)]
+        del translator
+
+        # save to csv
+        df = pd.DataFrame({'text': back_translated})
+        df.to_csv(f'aug-data/{name}.csv')
+    
+    def from_argument(self, dialogues):
+        """
+        Params
+        ------
+        - dialogues: list[list[str]]
+        """
+
+        # to french
+        translator = pipeline('translation_en_to_fr', model='Helsinki-NLP/opus-mt-en-fr', device='cuda')
+        original = []
+        for dia in dialogues:
+            original.extend(dia)
+        translated = [a['translation_text'] for a in translator(original)]
+        del translator
+
+        # back to english
+        translator = pipeline('translation_fr_to_en', model='Helsinki-NLP/opus-mt-fr-en', device='cuda')
+        back_translated = [a['translation_text'] for a in translator(translated)]
+
+        return back_translated
 
 
 class Inserter:
@@ -136,7 +169,13 @@ class Inserter:
         return not any(flags)
 
     def _choose_confident(self, fill_res):
-        """Drop predicted tokens which have low score or are included into forbidden tokens."""
+        """
+        Drop predicted tokens which have low score or are included into forbidden tokens.
+        
+        Params
+        ------
+        - fill_res: predicted tokens for single <mask>
+        """
         words = []
         scores = []
         for word, score in map(lambda x: (x['token_str'], x['score']), fill_res):
@@ -149,7 +188,7 @@ class Inserter:
                 scores.append(score)
         return words, scores
     
-    def _replace_masks(self, text, outputs):
+    def _replace_masks(self, text, outputs) -> str:
         """Replace <mask> with predicted tokens."""
         for words, scores in outputs:
             i = text.find('<mask>')
@@ -170,19 +209,19 @@ class Inserter:
 
         Params
         ------
-        - masked_dialogues: list of utterances
-
+        - masked_dialogues: list of dialogues i.e. strings with \\n delimiter betweem utterances
+ 
         Return
         ------
         list of utterances merged into single list
         """
 
         mask_filler = pipeline('fill-mask', model=self.model, device=self.device)
-        
+        dataset_fill_results = mask_filler(masked_dialogues, top_k=1000)
         res = []
-        for dia in masked_dialogues:
+        for dia, dia_fill_results in zip(masked_dialogues, dataset_fill_results):
             # choose only confident predictions
-            outputs = [self._choose_confident(fill_res) for fill_res in mask_filler(dia, top_k=1000)]
+            outputs = [self._choose_confident(mask_fill_results) for mask_fill_results in dia_fill_results]
                 
             # insert predictions
             res.extend(self._replace_masks(dia, outputs).split('\n'))
@@ -202,26 +241,35 @@ class Inserter:
         list of utterances merged into single list
         """
 
-        mask_filler = pipeline('fill-mask', model=self.model, device=self.device)
-        
-        res = []
+        # get single list of utterances
+        utterances = []
         for dia in masked_dialogues:
-            dia = dia.split('\n')
+            utterances.extend(dia.split('\n'))
+        
+        # separate those with and without <mask>
+        i_uts_without_mask = []
+        uts_with_mask = []
+        for i, ut in enumerate(utterances):
+            if ut.find('<mask>') == -1:
+                i_uts_without_mask.append(i)
+            else:
+                uts_with_mask.append(ut)
 
-            # choose only confident predictions
-            outputs = []
-            for ut in dia:
-                if ut.find('<mask>') == -1:
-                    outputs.append([])
-                    continue
-                all_masks = mask_filler(ut, top_k=1000)
-                if isinstance(all_masks[0], dict):
-                    # in case there's single mask in utterance
-                    all_masks = [all_masks]
-                outputs.append([self._choose_confident(fill_res) for fill_res in all_masks])
-            
-            # insert predictions
-            res.extend([self._replace_masks(ut, options) for ut, options in zip(dia, outputs)])
+        # feed to MLM
+        mask_filler = pipeline('fill-mask', model=self.model, device=self.device)
+        dataset_fill_results = mask_filler(uts_with_mask, top_k=1000)
+        
+        # insert predictions to utterances with <mask>
+        res = []
+        for ut, ut_fill_results in zip(uts_with_mask, dataset_fill_results):
+            if isinstance(ut_fill_results[0], dict):
+                ut_fill_results = [ut_fill_results]
+            candidates = [self._choose_confident(mask_fill_results) for mask_fill_results in ut_fill_results]
+            res.append(self._replace_masks(ut, candidates))
+
+        # merge masked and untouched utterances
+        for i in i_uts_without_mask:
+            res.insert(i, utterances[i])
 
         return res
     
@@ -238,44 +286,26 @@ class Inserter:
         list of utterances merged into single list
         """
 
-        mask_filler = pipeline('fill-mask', model=self.model, device=self.device)
-        
-        res = []
+        # get single list of utterances
+        context_list = []
         for dia in masked_dialogues:
             dia = dia.split('\n')
-            context_list = []
-            for i in range(0, len(dia), context_length):
-                context_list.append('\n'.join(dia[i:i+context_length]))
-            
-            # choose only confident predictions
-            outputs = []
-            for context in context_list:
-                if context.find('<mask>') == -1:
-                    outputs.append([])
-                    continue
-                all_masks = mask_filler(context, top_k=1000)
-                if isinstance(all_masks[0], dict):
-                    # in case there's single mask in context
-                    all_masks = [all_masks]
-                outputs.append([self._choose_confident(fill_res) for fill_res in all_masks])
-            
-            # insert predictions
-            filled = []
-            for context, options in zip(context_list, outputs):
-                filled.extend(self._replace_masks(context, options).split('\n'))
-            
-            res.extend(filled)
+        
+            # join consequetive utterances into single string
+            context_list.extend(['\n'.join(dia[i:i+context_length]) for i in range(0, len(dia), context_length)])
 
-        return res
-
-    def _get_dialogues(self) -> List[List[str]]:
-        rle = json.load(open('aug-data/rle.json', 'r'))
-        utterances = read_csv('aug-data/original.csv')
+        # feed to MLM
+        mask_filler = pipeline('fill-mask', model=self.model, device=self.device)
+        dataset_fill_results = mask_filler(context_list, top_k=1000)
+        
+        # insert predictions to utterances with <mask>
         res = []
-        for i in range(len(rle)):
-            start = sum(rle[:i])
-            end = start + rle[i]
-            res.append(utterances[start:end])
+        for context, context_fill_results in zip(context_list, dataset_fill_results):
+            if isinstance(context_fill_results[0], dict):
+                context_fill_results = [context_fill_results]
+            candidates = [self._choose_confident(mask_fill_results) for mask_fill_results in context_fill_results]
+            res.extend(self._replace_masks(context, candidates).split('\n'))
+
         return res
 
     def from_file_system(self, name):
@@ -286,7 +316,7 @@ class Inserter:
         """
 
         # load data
-        dialogues = self._get_dialogues()
+        dialogues = get_dialogues()
 
         # perform masking and insertion
         if self.mask_utterance_level:

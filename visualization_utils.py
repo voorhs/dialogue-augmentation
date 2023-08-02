@@ -10,6 +10,7 @@ from redlines import Redlines
 from IPython.display import Markdown, display
 from typing import List
 from sentence_encoding import sentence_encoder
+from Levenshtein import distance, ratio, jaro
 
 
 def assign_cluster_names(labels, texts) -> List[str]:
@@ -159,6 +160,13 @@ def show_similarities(i, name, func):
     aug_vecs = np.load(f'aug-data/vectors-{name}.npy')[i]
     print('similarity:', func(orig_vecs, aug_vecs))
 
+    # display some edit distance
+    orig_txt = ' '.join(orig_txt)
+    aug_txt = ' '.join(aug_txt)
+    dist1 = distance(orig_txt, aug_txt)
+    dist2 = ratio(orig_txt, aug_txt)
+    dist3 = jaro(orig_txt, aug_txt)
+    print(f'levenstein={dist1}, ratio={dist2}, jaro={dist3}')
+
     mkdown = Redlines('\n'.join(orig), '\n'.join(aug)).output_markdown
-    # print(mkdown)
     display(Markdown(mkdown))
