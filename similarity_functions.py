@@ -70,6 +70,35 @@ def count_vectorizer_from_argument(augmented_utterances, rle, speaker, clusterer
     return vectors
 
 
+def count_vectorizer_from_llm(name, dialogues, speaker, clusterer):
+    """
+    1. Encodes each utterance with sentence encoder specified in sentence_encoding.py
+    2. Infers DGAC clusterer to predict labels for each utterance
+    3. Vectorizes each dialogue as bag of cluster labels (analogue to bag of words)
+
+    Params
+    ------
+    - augmented_utterances: list[str], all utterances merged into single list
+    - rle: list[int], list of lengths of dialogues
+    - speaker: np.ndarray, list of 0 and 1 corresponding to user and system utterances
+    - clusterer: Clusters, pretrained dgac clusterer
+    """
+
+    vectors = []
+    for dia, spe in zip(dialogues, speaker):
+        embeddings = sentence_encoder(dia)
+    
+        spe = np.array(spe)
+        labels_user, labels_system = clusterer.predict(embeddings, spe)
+        labels = np.empty(len(embeddings), dtype=np.int16)
+        labels[spe == 0] = labels_user
+        labels[spe == 1] = labels_system + clusterer.n_clusters // 2
+
+        vectors.append(np.bincount(labels, minlength=clusterer.n_clusters))
+    
+    np.save(f'aug-data/vectors-{name}', vectors)
+
+
 def intersection(vec_i, vec_j):
     return np.minimum(vec_i, vec_j).sum()
 
