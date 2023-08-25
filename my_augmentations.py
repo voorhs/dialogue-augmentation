@@ -1,4 +1,3 @@
-from visualization_utils import read_csv
 import pandas as pd
 import numpy as np
 import json
@@ -9,50 +8,60 @@ import string
 from typing import List, Literal
 
 
-def get_dialogues(return_speaker=False) -> List[List[str]]:
-    rle = json.load(open('aug-data/rle.json', 'r'))
-    utterances = read_csv('aug-data/original.csv')
-    res = []
-    if return_speaker:
-        speaker = json.load(open('aug-data/speaker.json', 'r'))
-        res_speakers = []
-    for i in range(len(rle)):
-        start = sum(rle[:i])
-        end = start + rle[i]
-        res.append(utterances[start:end])
-        if return_speaker:
-            res_speakers.append(speaker[start:end])
-    if return_speaker:
-        return res, res_speakers
-    return res
-
-
 class BackTranslator:
+    """Back Translate each utterance (separately). Preserves intent."""
+
     def __init__(self, language, forbidden_tokens=None, device='cpu'):
         self.language = language
         self.device = device
+
+    @staticmethod
+    def _load_utterances():
+        dialogues = json.load(open('aug-data/original.json', 'r'))
+        utterances = []
+        for dia in dialogues:
+            utterances.extend([item['utterance'] for item in dia])
+        return utterances, dialogues
+
+    @staticmethod
+    def _save(augmented, original, name):
+        """
+        Params
+        ------
+        - augmented: list of utterances
+        - original: list of lists of dicts with keys 'utterance', 'speaker'
+        - name: name of output .json file
+        """
+        i = 0
+        res = []
+        for dia in original:
+            aug_dia = []
+            for item in dia:
+                aug_dia.append({'utterance': augmented[i], 'speaker': item['speaker']})
+                i += 1
+            res.append(aug_dia)
+        json.dump(res, open(f'aug-data/{name}.json', 'w'))
 
     def from_file_system(self, name='back_trans_hf'):
         """
         Params
         ------
-        - name: str, name of output .csv file
+        - name: str, name of output .json file
         """
 
-        # to french
+        # to `self.language`
         translator = pipeline('translation_en_to_fr', model=f'Helsinki-NLP/opus-mt-en-{self.language}', device=self.device)
-        original = read_csv('aug-data/original.csv')
-        translated = [a['translation_text'] for a in translator(original)]
+        original, dialogues = self._load_utterances()
+        translated = [a['translation_text'] for a in translator(original, batch_size=4)]
         del translator
 
         # back to english
         translator = pipeline('translation_fr_to_en', model=f'Helsinki-NLP/opus-mt-{self.language}-en', device=self.device)
-        back_translated = [a['translation_text'] for a in translator(translated)]
+        back_translated = [a['translation_text'] for a in translator(translated, batch_size=4)]
         del translator
 
-        # save to csv
-        df = pd.DataFrame({'text': back_translated})
-        df.to_csv(f'aug-data/{name}.csv')
+        self._save(back_translated, dialogues, name)
+
     
     def from_argument(self, dialogues):
         """
@@ -335,15 +344,23 @@ class Inserter:
 
         return res_uts
 
+    @staticmethod
+    def _load_dialogues():
+        dialogues = json.load(open('aug-data/original.json', 'r'))
+        res = []
+        for dia in dialogues:
+            res.append([item['utterance'] for item in dia])
+        return res, dialogues
+
     def from_file_system(self, name):
         """
         Add words to random places of dialogues.
         
-        Reads data from from 'aug-data/original.csv'. Saves result to f'aug-data/{name}.csv'.
+        Reads data from 'aug-data/original.json'. Saves result to f'aug-data/{name}.json'.
         """
 
         # load data
-        dialogues = get_dialogues()
+        dialogues, original = self._load_dialogues()
 
         # perform masking and insertion
         if self.mask_utterance_level:
@@ -358,9 +375,7 @@ class Inserter:
         else:
             filled = self._fill_masks_dialogue_level(masked)
         
-        # save result
-        df = pd.DataFrame({'text': filled})
-        df.to_csv(f'aug-data/{name}.csv')
+        BackTranslator._save(filled, original, name)
     
     def from_argument(self, dialogues):
         """
@@ -427,23 +442,6 @@ class Replacer(Inserter):
                 to_insert = words[int(np.random.choice(len(words), 1, p=probs))]
             text = text[:i] + to_insert + text[i+6:]
         return text
-
-
-def _post_process(sequences, prompt_list, as_json):
-    """Helper for Llama augmenters."""
-    res = []
-    for seq, prompt in zip(sequences, prompt_list):
-        txt = seq['generated_text'][len(prompt):]
-        if as_json:
-            start = txt.find('{')
-            end = txt.rfind('}')+1
-            cur_res = json.loads(txt[start:end])
-        else:
-            start = txt.find('"""')
-            end = txt.rfind('```')+1
-            cur_res = txt[start:end]
-        res.append(cur_res)
-    return res
 
 
 class LlamaMaskFiller:
@@ -551,8 +549,18 @@ Specific input:
             
         return dialogue, speaker
 
+    @staticmethod
+    def _load_dialogues():
+        dialogues = json.load(open('aug-data/original.json', 'r'))
+        res_ut = []
+        res_sp = []
+        for dia in dialogues:
+            res_ut.append([item['utterance'] for item in dia])
+            res_sp.append([item['speaker'] for item in dia])
+        return res_ut, res_sp
+
     def from_file_system(self, name):
-        dialogues, speakers = get_dialogues(return_speaker=True)
+        dialogues, speakers = self._load_dialogues()
 
         if self.masking == 'replace':
             masker = LlamaMaskFiller._replace
@@ -584,12 +592,6 @@ Specific input:
         )
 
         json.dump(sequences, open(f'aug-data/{name}-raw.json', 'w'))
-        
-        try:
-            processed = _post_process(sequences, prompt_list, self.as_json)
-            json.dump(processed, open(f'aug-data/{name}.json', 'w'))
-        except Exception as e:
-            print(f'error occurred during post processing: {e}')
 
 
 class LlamaSummarizer:
@@ -641,7 +643,7 @@ Specific input:
 [/INST]"""
 
     def from_file_system(self, name):
-        dialogues, speakers = get_dialogues(return_speaker=True)
+        dialogues, speakers = LlamaMaskFiller._load_dialogues()
 
         prompt_list = []
         for dia, spe in zip(dialogues, speakers):
@@ -662,12 +664,6 @@ Specific input:
         )
 
         json.dump(sequences, open(f'aug-data/{name}-raw.json', 'w'))
-        
-        try:
-            processed = _post_process(sequences, prompt_list, self.as_json)
-            json.dump(processed, open(f'aug-data/{name}.json', 'w'))
-        except Exception as e:
-            print(f'error occurred during post processing: {e}')
 
 
 class LlamaVerbose(LlamaSummarizer):
@@ -770,56 +766,56 @@ Specific input:
 
 if __name__ == "__main__":
 
-    # inserter = Inserter(
-    #     fraction=0.5,
-    #     score_threshold=0.005,
-    #     k=5,
-    #     mask_utterance_level=True,
-    #     fill_utterance_level=2,
-    #     model='microsoft/mpnet-base',
-    #     device='cuda'
-    # )
-    # inserter.from_file_system('inserter')
-    
-    # replacer = Replacer(
-    #     k=3,
-    #     fill_utterance_level=2,
-    #     model='microsoft/mpnet-base',
-    #     device='cuda'
-    # )
-    # replacer.from_file_system('replacer')
-
-    # back_translator = BackTranslator(
-    #     language='ru',
-    #     device='cuda'
-    # )
-    # back_translator.from_file_system('back_translator')
-
-    model = 'meta-llama/Llama-2-13b-chat-hf'
-
-    tokenizer = AutoTokenizer.from_pretrained(model)
-    tokenizer.pad_token_id = tokenizer.eos_token_id
-    llm = pipeline(
-        "text-generation",
-        model=AutoModelForCausalLM.from_pretrained(
-            model,
-            device_map='auto',
-            load_in_4bit=True
-        ),
-        tokenizer=tokenizer
+    inserter = Inserter(
+        fraction=0.5,
+        score_threshold=0.005,
+        k=5,
+        mask_utterance_level=True,
+        fill_utterance_level=2,
+        model='microsoft/mpnet-base',
+        device='cuda'
     )
+    inserter.from_file_system('inserter')
+    
+    replacer = Replacer(
+        k=3,
+        fill_utterance_level=2,
+        model='microsoft/mpnet-base',
+        device='cuda'
+    )
+    replacer.from_file_system('replacer')
 
-    LlamaMaskFiller(llm, tokenizer, 'replace', fraction=0.2).from_file_system('llm_replacer')
-    LlamaMaskFiller(llm, tokenizer, 'insert', fraction=0.2).from_file_system('llm_inserter')
-    LlamaMaskFiller(llm, tokenizer, 'head', fraction=0.2).from_file_system('llm_head')
-    LlamaMaskFiller(llm, tokenizer, 'tail', fraction=0.2).from_file_system('llm_tail')
+    back_translator = BackTranslator(
+        language='ru',
+        device='cuda'
+    )
+    back_translator.from_file_system('back_translator')
 
-    LlamaSummarizer(-5, llm, tokenizer).from_file_system('llm_summarizer')
-    LlamaVerbose(+5, llm, tokenizer).from_file_system('llm_verbose')
-    LlamaParaphraser('formal', llm, tokenizer).from_file_system('llm_formal')
-    LlamaParaphraser('informal', llm, tokenizer).from_file_system('llm_informal')
-    LlamaParaphraser('technical', llm, tokenizer).from_file_system('llm_technical')
-    LlamaParaphraser('persuasive', llm, tokenizer).from_file_system('llm_persuasive')
-    LlamaParaphraser('creative', llm, tokenizer).from_file_system('llm_creative')
-    LlamaParaphraser('playful', llm, tokenizer).from_file_system('llm_playful')
+    # model = 'meta-llama/Llama-2-13b-chat-hf'
+
+    # tokenizer = AutoTokenizer.from_pretrained(model)
+    # tokenizer.pad_token_id = tokenizer.eos_token_id
+    # llm = pipeline(
+    #     "text-generation",
+    #     model=AutoModelForCausalLM.from_pretrained(
+    #         model,
+    #         device_map='auto',
+    #         load_in_4bit=True
+    #     ),
+    #     tokenizer=tokenizer
+    # )
+
+    # LlamaMaskFiller(llm, tokenizer, 'replace', fraction=0.2).from_file_system('llm_replacer')
+    # LlamaMaskFiller(llm, tokenizer, 'insert', fraction=0.2).from_file_system('llm_inserter')
+    # LlamaMaskFiller(llm, tokenizer, 'head', fraction=0.2).from_file_system('llm_head')
+    # LlamaMaskFiller(llm, tokenizer, 'tail', fraction=0.2).from_file_system('llm_tail')
+
+    # LlamaSummarizer(-5, llm, tokenizer).from_file_system('llm_summarizer')
+    # LlamaVerbose(+5, llm, tokenizer).from_file_system('llm_verbose')
+    # LlamaParaphraser('formal', llm, tokenizer).from_file_system('llm_formal')
+    # LlamaParaphraser('informal', llm, tokenizer).from_file_system('llm_informal')
+    # LlamaParaphraser('technical', llm, tokenizer).from_file_system('llm_technical')
+    # LlamaParaphraser('persuasive', llm, tokenizer).from_file_system('llm_persuasive')
+    # LlamaParaphraser('creative', llm, tokenizer).from_file_system('llm_creative')
+    # LlamaParaphraser('playful', llm, tokenizer).from_file_system('llm_playful')
     

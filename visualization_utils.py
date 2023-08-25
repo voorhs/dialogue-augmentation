@@ -76,25 +76,6 @@ def show_clusters(is_system) -> None:
     fig.show()
 
 
-def read_csv(path) -> List[str]:
-    """Read text from .csv file with two columns: index, text. This function is necessary because of how weirdly pandas saves texts."""
-    res = []
-    with open(path, 'r') as f:
-        f.readline() # row with column names
-        for line in f.readlines():
-            utter = ','.join(line.split(',')[1:])
-            res.append(utter.replace('"', '').strip())
-    return res
-
-
-def get_dialogue(i, name) -> List[str]:
-    original = read_csv('aug-data/original.csv')
-    rle = json.load(open('aug-data/rle.json', 'r'))
-    start = sum(rle[:i])
-    end = start + rle[i]
-    return original[start:end]
-
-
 def show_augmented(i, name) -> None:
     """
     Show difference between original dialogue and augmented.
@@ -102,18 +83,14 @@ def show_augmented(i, name) -> None:
     Params
     ------
     - i: int, index of dialogue to construct from aug-data/utterances.json
-    - name: {'original', 'clare', 'embedding', 'checklist'}, augmentation method
+    - name: file name to extract augmented dialogue from as f'aug-data/{name}.csv'
     """
-    original = read_csv('aug-data/original.csv')
-    speaker = np.array(json.load(open('clust-data/speaker.json', 'r')))
-    rle = json.load(open('aug-data/rle.json', 'r'))
-
-    augmented = read_csv(f'aug-data/{name}.csv')
-    start = sum(rle[:i])
-    end = start + rle[i]
+    original = json.load(open('aug-data/original.json', 'r'))[i]
+    augmented = json.load(open(f'aug-data/{name}.json', 'r'))[i]
+    
     speaker_alias = "AB"
-    orig = '\n'.join([f'[{speaker_alias[j]}] {ut}' for j, ut in zip(speaker[start:end], original[start:end])])
-    aug = '\n'.join([f'[{speaker_alias[j]}] {ut}' for j, ut in zip(speaker[start:end], augmented[start:end])])
+    orig = '\n'.join([f'[{speaker_alias[item["speaker"]]}] {item["utterance"]}' for item in original])
+    aug = '\n'.join([f'[{speaker_alias[item["speaker"]]}] {item["utterance"]}' for item in augmented])
 
     display(Markdown(Redlines(orig, aug).output_markdown))
 
@@ -130,16 +107,12 @@ def show_similarities(i, name, func, display_mkdown=True, return_mkdown=False):
     """
 
     # load texts
-    rle = json.load(open('aug-data/rle.json', 'r'))
-    start = sum(rle[:i])
-    end = start + rle[i]
-    orig_txt = read_csv(f'aug-data/original.csv')[start:end]
-    aug_txt = read_csv(f'aug-data/{name}.csv')[start:end]
-    speaker = json.load(open('aug-data/speaker.json', 'r'))[start:end]
+    orig_obj = json.load(open('aug-data/original.json', 'r'))[i]
+    aug_obj = json.load(open(f'aug-data/{name}.json', 'r'))[i]
 
     # load cluster labels
-    orig_labels = json.load(open(f'aug-data/clust-labels-original.json'))[start:end]
-    aug_labels = json.load(open(f'aug-data/clust-labels-{name}.json'))[start:end]
+    orig_labels = json.load(open(f'aug-data/clust-labels-original.json'))[i]
+    aug_labels = json.load(open(f'aug-data/clust-labels-{name}.json'))[i]
 
     # load cluster names
     names = json.load(open(f'clust-data/cluster-tfidf-names-user.json'))
@@ -149,11 +122,11 @@ def show_similarities(i, name, func, display_mkdown=True, return_mkdown=False):
     orig = []
     aug = []
     speaker_alias = "AB"
-    for j in range(rle[i]):
-        o_lab = orig_labels[j]
-        a_lab = aug_labels[j]
-        orig.append(f"""[{speaker_alias[speaker[j]]}] [label: {o_lab}] [name: {names[o_lab]}] {orig_txt[j]}""")
-        aug.append(f'[{speaker_alias[speaker[j]]}] [label: {a_lab}] [name: {names[a_lab]}] {aug_txt[j]}')
+    for item, lab in zip(orig_obj, orig_labels):
+        orig.append(f"[{speaker_alias[item['speaker']]}] [label: {lab}] [name: {names[lab]}] {item['utterance']}")
+
+    for item, lab in zip(aug_obj, aug_labels):
+        aug.append(f"[{speaker_alias[item['speaker']]}] [label: {lab}] [name: {names[lab]}] {item['utterance']}")
 
     # load vectorizations
     orig_vecs = np.load(f'aug-data/vectors-original.npy')[i]
@@ -161,8 +134,8 @@ def show_similarities(i, name, func, display_mkdown=True, return_mkdown=False):
     intent_similarity = func(orig_vecs, aug_vecs)
 
     # display some edit distance
-    orig_txt = ' '.join(orig_txt)
-    aug_txt = ' '.join(aug_txt)
+    orig_txt = ' '.join(orig)
+    aug_txt = ' '.join(aug)
     levenstein = distance(orig_txt, aug_txt)
     similarity_ratio = ratio(orig_txt, aug_txt)
     similarity_jaro = jaro(orig_txt, aug_txt)

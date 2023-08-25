@@ -188,12 +188,13 @@ class Clusters:
         Params
         ------
             X: np.ndarray of size (n_utterances, emb_size)
+            speaker: iterable of size (n_utterances,)
         
         Return
         ------
             np.ndarray of size (n_utterances,)
         """
-        is_user = (speaker == 0)
+        is_user = (np.array(speaker) == 0)
 
         labels_user = cdist(X[is_user], self.centroids_user, metric='euclidean').argmin(axis=1)
         labels_system = cdist(X[~is_user], self.centroids_system, metric='euclidean').argmin(axis=1)
