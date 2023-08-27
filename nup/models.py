@@ -24,7 +24,7 @@ class NUPDataset(Dataset):
     def __getitem__(self, i):
         i_chunk = ceil(i / self.n_chunks)
         idx_within_chunk = i % self.chunk_size
-        item = json.load(open(f'nup-dataset/{self.split}/{i_chunk}.json', 'r'))[idx_within_chunk]
+        item = json.load(open(f'dataset/{self.split}/{i_chunk}.json', 'r'))[idx_within_chunk]
         return item
 
 def collate_fn(batch):
@@ -40,6 +40,7 @@ import numpy as np
 
 LR = 1e-3
 WEIGHT_DECAY = 1e-2
+BETAS = (0.9, 0.999)
 BATCH_SIZE = 64
 PROJECTION_SIZE = 512
 
@@ -148,7 +149,7 @@ class ChainCosine(pl.LightningModule):
             value=loss,
             prog_bar=False,
             logger=True,
-            on_step=False,
+            on_step=True,
             on_epoch=True,
             batch_size=BATCH_SIZE
         )
@@ -166,12 +167,48 @@ class ChainCosine(pl.LightningModule):
             batch_size=BATCH_SIZE
         )
     
-    def configure_optimizers(self):
-        return torch.optim.AdamW(
-            self.parameters(),
-            lr=LR,
-            weight_decay=WEIGHT_DECAY
-        )
+    def on_train_start(self):
+        self.logger.log_hyperparams(self.optimizers().defaults)
+
+    def configure_optimizers(self, config):
+        """Taken from https://github.com/karpathy/minGPT/blob/3ed14b2cec0dfdad3f4b2831f2b4a86d11aef150/mingpt/model.py#L136"""
+        # separate out all parameters to those that will and won't experience regularizing weight decay
+        decay = set()
+        no_decay = set()
+        whitelist_weight_modules = (torch.nn.Linear, )
+        blacklist_weight_modules = (torch.nn.LayerNorm, torch.nn.Embedding)
+        for mn, m in self.named_modules():
+            for pn, p in m.named_parameters():
+                fpn = '%s.%s' % (mn, pn) if mn else pn # full param name
+
+                if pn.endswith('bias'):
+                    # all biases will not be decayed
+                    no_decay.add(fpn)
+                elif pn.endswith('weight') and isinstance(m, whitelist_weight_modules):
+                    # weights of whitelist modules will be weight decayed
+                    decay.add(fpn)
+                elif pn.endswith('weight') and isinstance(m, blacklist_weight_modules):
+                    # weights of blacklist modules will NOT be weight decayed
+                    no_decay.add(fpn)
+
+        # special case the position embedding parameter in the root GPT module as not decayed
+        # no_decay.add('pos_emb')
+
+        # validate that we considered every parameter
+        param_dict = {pn: p for pn, p in self.named_parameters()}
+        inter_params = decay & no_decay
+        union_params = decay | no_decay
+        assert len(inter_params) == 0, "parameters %s made it into both decay/no_decay sets!" % (str(inter_params), )
+        assert len(param_dict.keys() - union_params) == 0, "parameters %s were not separated into either decay/no_decay set!" \
+                                                    % (str(param_dict.keys() - union_params), )
+
+        # create the pytorch optimizer object
+        optim_groups = [
+            {"params": [param_dict[pn] for pn in sorted(list(decay))], "weight_decay": config['weight_decay']},
+            {"params": [param_dict[pn] for pn in sorted(list(no_decay))], "weight_decay": 0.0},
+        ]
+        optimizer = torch.optim.AdamW(optim_groups, lr=config['lr'], betas=config['betas'])
+        return optimizer
 
 if __name__ == "__main__":
     from torch.utils.data import DataLoader
@@ -179,27 +216,30 @@ if __name__ == "__main__":
     from datetime import datetime
     torch.set_float32_matmul_precision('medium')
     import os
+    from functools import partial
 
     os.environ['TOKENIZERS_PARALLELISM'] = 'false'
+    os.environ['CUDA_VISIBLE_DEVICES'] = '0'
 
 
     train_loader = DataLoader(
-        dataset=NUPDataset('train', fraction=1),
+        dataset=NUPDataset('train', fraction=0.01),
         batch_size=BATCH_SIZE,
         shuffle=True,
-        num_workers=10,
+        num_workers=1,
         collate_fn=collate_fn
     )
 
     val_loader = DataLoader(
-        dataset=NUPDataset('val', fraction=1),
+        dataset=NUPDataset('val', fraction=0.01),
         batch_size=BATCH_SIZE,
         shuffle=False,
-        num_workers=10,
+        num_workers=1,
         collate_fn=collate_fn
     )
 
     model = ChainCosine(n_speakers=2, projection_size=PROJECTION_SIZE, tau=0.3)
+    model.configure_optimizers = partial(model.configure_optimizers, config={'lr': LR, 'weight_decay': WEIGHT_DECAY, 'betas': BETAS})
 
     checkpoint_callback = ModelCheckpoint(
         monitor='val_loss',
@@ -209,8 +249,8 @@ if __name__ == "__main__":
     )
 
     trainer = pl.Trainer(
-        # max_epochs=100,
-        max_time={'minutes': 120},
+        max_epochs=1,
+        # max_time={'minutes': 120},
 
         # hardware settings
         accelerator='gpu',
@@ -224,7 +264,7 @@ if __name__ == "__main__":
         callbacks=[checkpoint_callback],
 
         # check if model is implemented correctly
-        overfit_batches=None,
+        overfit_batches=False,
 
         # check training_step and validation_step doesn't fail
         fast_dev_run=False,
