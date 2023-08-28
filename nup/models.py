@@ -347,9 +347,12 @@ class UtteranceRanker(nn.Module):
         # (B, T)
         ranks_logits = self.ranker_head(hidden_states)
 
+        B, T = ranks_logits.shape
+
         ranks_probs = F.softmax(ranks_logits, dim=1)
-        loss = F.cross_entropy(ranks_probs.sort(descending=True), ranks_probs, reduction='mean')
-        return loss
+        ranks_probs_true = torch.linspace(0, 1, T).unsqueeze(0).expand(B, T)  # may be instead of linspace make it exponential, quadratical etc?
+        
+        return F.cross_entropy(ranks_probs, ranks_probs_true, reduction='mean')
 
 
 class Learner(pl.LightningModule):
