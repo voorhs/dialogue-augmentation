@@ -1,7 +1,14 @@
 from torch.utils.data import Dataset
 from math import ceil
 import json
-from typing import Literal
+from typing import List, Literal, Union
+from transformers import AutoModel, AutoTokenizer
+import torch.nn as nn
+import torch
+import lightning.pytorch as pl
+import torch.nn.functional as F
+import numpy as np
+from dataclasses import dataclass
 
 
 class NUPDataset(Dataset):
@@ -22,27 +29,72 @@ class NUPDataset(Dataset):
         return self.len
     
     def __getitem__(self, i):
+        """
+        Loads one chunk and returns one dialogue, represented with an object of the following schema:
+        ```
+        {
+            "type": "array",
+            "items":
+            {
+                "type": "object",
+                "properties":
+                {
+                    "utterance": {"type": "string"},
+                    "speaker": {"type": "number"}
+                }
+            }
+        }
+        ```"""
         i_chunk = ceil(i / self.n_chunks)
         idx_within_chunk = i % self.chunk_size
         item = json.load(open(f'dataset/{self.split}/{i_chunk}.json', 'r'))[idx_within_chunk]
         return item
 
+
 def collate_fn(batch):
     return batch
 
 
-import lightning.pytorch as pl
-import torch
-import torch.nn as nn
-import torch.nn.functional as F
-from sentence_transformers import SentenceTransformer
-import numpy as np
+class mySentenceTransformer(nn.Module):
+    """Imitation of SentenceTransformers (https://www.sbert.net/)"""
+
+    def __init__(
+            self,
+            model_name='sentence-transformers/all-mpnet-base-v2',
+            pooling=True
+        ):
+        """If `pooling=False`, then instead of sentence embeddings forward will return list of token embeddings."""
+        super().__init__()
+        self.model_name = model_name
+        self.pooling = pooling
+
+        self.model = AutoModel.from_pretrained(model_name)
+        self.tokenizer = AutoTokenizer.from_pretrained(model_name)
+
+    def forward(self, sentences: List[str]) -> Union[List[torch.Tensor], List[List[torch.Tensor]]]:
+        input = self.tokenizer(sentences, padding='longest', return_tensors='pt')
+        output = self.model(**input)
+        
+        res = []
+        for token_emb, attention in zip(output.last_hidden_state, input['attention_mask']):
+            last_mask_id = len(attention)-1
+            while last_mask_id > 0 and attention[last_mask_id].item() == 0:
+                last_mask_id -= 1
+            embs = token_emb[:last_mask_id+1]
+            if self.pooling:
+                embs = torch.mean(embs, dim=0)
+                embs = embs / torch.linalg.norm(embs)
+            res.append(embs)
+
+        return res
+
 
 LR = 1e-3
 WEIGHT_DECAY = 1e-2
 BETAS = (0.9, 0.999)
 BATCH_SIZE = 64
 PROJECTION_SIZE = 512
+
 
 class Projector(nn.Module):
     """Fully-Connected 2-layer Linear Model. Taken from linking prediction paper code."""
@@ -61,7 +113,7 @@ class Projector(nn.Module):
             torch.nn.init.orthogonal_(l.weight)
 
     def forward(self, x):
-        if isinstance(x, np.ndarray):
+        if not isinstance(x, torch.Tensor):
             x = torch.FloatTensor(x)
         else:
             x = x.to(torch.float32)
@@ -72,18 +124,18 @@ class Projector(nn.Module):
         return F.normalize(self.final(x), dim=1)
 
 
-class ChainCosine(pl.LightningModule):
-    def __init__(self, n_speakers, projection_size, tau):
+class ChainCosine(nn.Module):
+    def __init__(self, encoder_name, n_speakers, projection_size, tau, finetune_encoder=False):
         super().__init__()
 
         self.n_speakers = n_speakers
         self.projection_size = projection_size
         self.tau = tau
         
-        self.encoder = SentenceTransformer('sentence-transformers/all-mpnet-base-v2')
-        self.encoder.requires_grad_(False)
-        
-        sentence_embedding_dimension = self.encoder.get_sentence_embedding_dimension()
+        self.encoder = mySentenceTransformer(encoder_name, pooling=True)
+        self.encoder.requires_grad_(finetune_encoder)
+
+        sentence_embedding_dimension = self.encoder.model.config.hidden_size
         self.context_projector = Projector(
             input_size=sentence_embedding_dimension,
             output_size=self.projection_size
@@ -141,9 +193,171 @@ class ChainCosine(pl.LightningModule):
         loss_r = F.cross_entropy(logits.T, labels, reduction='mean')
 
         return (loss_c + loss_r) / 2
+
+
+@dataclass
+class TransformerConfig:
+    hidden_size: int
+    num_attention_heads: int
+    attention_probs_dropout_prob: float
+    intermediate_size: int
+    n_layers: int
+
+
+class SelfAttention(nn.Module):
+    def __init__(
+            self,
+            config: TransformerConfig
+        ):
+        super().__init__()
+        
+        if config.hidden_size % config.num_attention_heads != 0:
+            raise ValueError(
+                f"The hidden size ({config.hidden_size}) is not a multiple of the number of attention "
+                f"heads ({config.num_attention_heads})"
+            )
+        
+        self.config = config
+
+        self.attention_head_size = config.hidden_size // config.num_attention_heads
+
+        self.norm = nn.LayerNorm(config.hidden_size)
+        self.q = nn.Linear(config.hidden_size, config.hidden_size)
+        self.k = nn.Linear(config.hidden_size, config.hidden_size)
+        self.v = nn.Linear(config.hidden_size, config.hidden_size)
+        self.o = nn.Linear(config.hidden_size, config.hidden_size)
+
+        self.dropout = nn.Dropout(config.attention_probs_dropout_prob)
+
+    def transpose_for_scores(self, x):
+        """
+        change view from (B, T, H) to (B, n, T, h)
+        - B batch size
+        - T longest sequence size
+        - H hidden size
+        - n number of att heads
+        - h single att head size
+        """
+        new_x_shape = x.size()[:-1] + (self.config.num_attention_heads, self.attention_head_size)
+        x = x.view(*new_x_shape)
+        return x.permute(0, 2, 1, 3)
+
+    def forward(self, x):
+        # (B, T, H)
+        hidden_states = self.norm(x)
+
+        # (B, T, H)
+        q = self.q(hidden_states)
+        k = self.k(hidden_states)
+        v = self.v(hidden_states)
+
+        # (B, n, T, h)
+        q = self.transpose_for_scores(q)
+        k = self.transpose_for_scores(k)
+        v = self.transpose_for_scores(v)
+
+        # (B, n, T, T)
+        attention_scores = torch.matmul(q, k.transpose(-1, -2))
+        attention_scores = attention_scores / np.sqrt(self.attention_head_size)
+
+        # (B, n, T, T)
+        attention_probs = nn.functional.softmax(attention_scores, dim=-1)
+        attention_probs = self.dropout(attention_probs)
+
+        # (B, n, T, h)
+        c = torch.matmul(attention_probs, v)
+
+        # (B, T, H)
+        c = c.permute(0, 2, 1, 3).contiguous()
+        new_c_shape = c.size()[:-2] + (self.config.hidden_size,)
+        c = c.view(*new_c_shape)
+
+        # (B, T, H)
+        return x + self.o(c)
+
+
+class FFBlock(nn.Module):
+    def __init__(self, config: TransformerConfig):
+        super().__init__()
+        
+        self.norm = nn.LayerNorm(config.hidden_size)
+        self.linear1 = nn.Linear(config.hidden_size, config.intermediate_size)
+        self.nonlinear = nn.GELU()
+        self.linear2 = nn.Linear(config.intermediate_size, config.hidden_size)
     
+    def forward(self, x):
+        return x + self.linear2(self.nonlinear(self.linear1(self.norm(x))))
+
+
+class TransformerBlock(nn.Module):
+    def __init__(self, config: TransformerConfig):
+        super().__init__()
+        
+        self.att = SelfAttention(config.hidden_size, config.num_attention_heads, config.attention_probs_dropout_prob)
+        self.ff = FFBlock(config.hidden_size, config.intermediate_size)
+        self.norm = nn.LayerNorm(config.hidden_size)
+
+    def forward(self, x):
+        x = self.att(x)
+        x = self.ff(x)
+        return self.norm(x)
+
+
+class RankerHead(nn.Module):
+    def __init__(self, hidden_size, dropout_prob):
+        super().__init__()
+
+        self.dropout = nn.Dropout(dropout_prob)
+        self.ranker = nn.Linear(hidden_size, 1)
+        self.ranker.bias.data.zero_()
+    
+    def forward(self, x: torch.Tensor):
+        x = self.dropout(x)
+        x = self.ranker(x)
+        return x.squeeze(-1)
+
+
+class UtteranceRanker(nn.Module):
+    def __init__(self, config: TransformerConfig, encoder_name, dropout_prob, finetune_encoder=False):
+        super().__init__()
+
+        self.encoder = mySentenceTransformer(encoder_name)
+        self.encoder.requires_grad_(finetune_encoder)
+
+        sentence_embedding_dimension = self.encoder.model.config.hidden_size
+        self.hidden_size = sentence_embedding_dimension // 2
+        
+        self.projector = Projector(sentence_embedding_dimension, self.hidden_size)
+        self.speaker_encoding = nn.Embedding(2, self.hidden_size)
+        self.transformer = nn.ModuleList([TransformerBlock(config) for _ in range(config.n_layers)])
+        self.ranker_head = RankerHead(self.hidden_size, dropout_prob)
+    
+    def forward(self, batch):
+        inputs = []
+        for dia in batch:
+            utterances = self.projector(self.encoder([item['utterance'] for item in dia]))
+            speakers = self.speaker_encoding(torch.tensor([item['speaker'] for item in dia]))
+            inputs.append(utterances + speakers)
+        
+        # padding and hence attention mask !!
+
+        # (B, T, H)
+        hidden_states = self.transformer(torch.tensor(inputs))
+
+        # (B, T)
+        ranks_logits = self.ranker_head(hidden_states)
+
+        ranks_probs = F.softmax(ranks_logits, dim=1)
+        loss = F.cross_entropy(ranks_probs.sort(descending=True), ranks_probs, reduction='mean')
+        return loss
+
+
+class Learner(pl.LightningModule):
+    def __init__(self, model):
+        self.model = model
+
     def training_step(self, batch, batch_idx):
-        loss = self.forward(batch)
+        loss = self.model(batch)
         self.log(
             name='train_loss',
             value=loss,
@@ -209,6 +423,7 @@ class ChainCosine(pl.LightningModule):
         ]
         optimizer = torch.optim.AdamW(optim_groups, lr=config['lr'], betas=config['betas'])
         return optimizer
+
 
 if __name__ == "__main__":
     from torch.utils.data import DataLoader
