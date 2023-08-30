@@ -1,5 +1,5 @@
 from torch.utils.data import Dataset
-from math import ceil
+import math
 import json
 from typing import List, Literal, Union
 from transformers import AutoModel, AutoTokenizer
@@ -17,17 +17,24 @@ from collections import defaultdict
 
 class NUPDataset(Dataset):
     chunk_size = 2048
-    def __init__(self, path, split: Literal['train', 'test', 'val'], fraction=1):
-        self.fraction = min(1, max(0, fraction))
+    def __init__(self, path, split: Literal['train', 'test', 'val'], fraction=1.):
         self.split = split
         self.path = path
 
         if split == 'train':
-            max_n_chunks = 2800
+            max_n_chunks = 2556
         elif split == 'test' or split == 'val':
-            max_n_chunks = 155
-            
-        self.n_chunks = ceil(self.fraction * max_n_chunks)
+            max_n_chunks = 142
+
+        if isinstance(fraction, float):
+            self.fraction = min(1., max(0., fraction))
+            self.n_chunks = math.ceil(self.fraction * max_n_chunks)
+        elif isinstance(fraction, int):
+            self.fraction = min(max_n_chunks, max(1, fraction))
+            self.n_chunks = fraction
+        else:
+            raise ValueError('fraction must be int or float')
+
         self.len = self.n_chunks * self.chunk_size
     
     def __len__(self):
@@ -50,7 +57,7 @@ class NUPDataset(Dataset):
             }
         }
         ```"""
-        i_chunk = ceil(i / self.chunk_size)
+        i_chunk = math.floor(i / self.chunk_size)
         idx_within_chunk = i % self.chunk_size
         item = json.load(open(f'{self.path}/dataset/{self.split}/{i_chunk}.json', 'r'))[idx_within_chunk]
         return item
@@ -100,7 +107,7 @@ class mySentenceTransformer(nn.Module):
         return res
 
 
-LR = 1e-3
+LR = 5e-4
 WEIGHT_DECAY = 1e-2
 BETAS = (0.9, 0.999)
 BATCH_SIZE = 32
@@ -156,7 +163,7 @@ class ChainCosine(nn.Module):
             output_size=self.projection_size
         )
 
-    def forward(self, batch):
+    def get_logits(self, batch):
         # collate utterances to list and get sentence encodings
         utterances = []
         rle = []
@@ -197,14 +204,36 @@ class ChainCosine(nn.Module):
             torch.stack(target_batch)
         )
 
-        # calculate loss
-        logits = context_batch @ target_batch.T
+        return context_batch @ target_batch.T
+
+    def forward(self, batch):
+        logits = self.get_logits(batch)
         labels = torch.arange(len(batch), device='cuda')
         
         loss = F.cross_entropy(logits, labels, reduction='mean')
         accuracy = (torch.argmax(logits, dim=1) == labels).float().mean().item()
 
         return loss, accuracy
+    
+    @torch.no_grad()
+    def score(self, dialogue):
+        batch = []
+        for i in range(1, len(dialogue)):
+            batch.append({
+                'context': dialogue[:i],
+                'target': dialogue[i]
+            })
+        B = len(batch)
+        logits = self.get_logits(batch)
+        return F.softmax(logits, dim=1).diag().prod().pow(1/B).cpu().item()
+
+    @staticmethod
+    def from_checkpoint(path_to_ckpt, map_location=None, **kwargs):
+        return Learner.load_from_checkpoint(
+            path_to_ckpt,
+            map_location=map_location,
+            model=ChainCosine(**kwargs)
+        ).model
 
 
 def freeze_hf_model(hf_model, finetune_encoder_layers: int):
@@ -367,20 +396,18 @@ class UtteranceSorter(nn.Module):
         self.hidden_size = sentence_embedding_dimension // 2
         
         self.projector = Projector(sentence_embedding_dimension, self.hidden_size)
-        self.speaker_encoding = nn.Embedding(2, self.hidden_size)
         config.hidden_size = self.hidden_size
         config.intermediate_size = 4 * self.hidden_size
         self.transformer = nn.ModuleList([TransformerBlock(config) for _ in range(config.n_layers)])
         self.ranker_head = RankerHead(self.hidden_size, dropout_prob)
 
-    def forward(self, batch):
+    def get_logits(self, batch):
         device = self.encoder.model.device
 
         inputs = []
         for dia in batch:
-            utterances = self.projector(self.encoder([item['utterance'] for item in dia]))
-            speakers = self.speaker_encoding(torch.tensor([item['speaker'] for item in dia], device=device, dtype=torch.long))
-            encoded_dialogue = torch.unbind(utterances + speakers)
+            utterances = self.projector(self.encoder([f"[{item['speaker']}] {item['utterance']}" for item in dia]))
+            encoded_dialogue = torch.unbind(utterances)
             inputs.append(encoded_dialogue)
         
         T = max(len(inp) for inp in inputs)
@@ -393,18 +420,40 @@ class UtteranceSorter(nn.Module):
             hidden_states = layer(hidden_states, attention_mask)
 
         # (B, T)
-        ranks_logits = self.ranker_head(hidden_states)
+        return self.ranker_head(hidden_states)
 
-        B, T = ranks_logits.shape
+    def get_permutaions(self, ranks_logits, dia_lens):
+        permutations = torch.argsort(ranks_logits, dim=1).detach().cpu().tolist()
+        return [perm[:length] for perm, length in zip(permutations, dia_lens)]
+    
+    def forward(self, batch):
+        device = self.encoder.model.device
+
+        ranks_logits = self.get_logits(batch)
         ranks_probs = F.softmax(ranks_logits, dim=1)
-        ranks_probs_true = torch.linspace(0, 1, T, device=device).unsqueeze(0).expand(B, T)  # may be instead of linspace make it exponential, quadratical etc?
+        
+        B, T = ranks_logits.shape
+        ranks_probs_true = torch.linspace(0, 1, T, device=device).unsqueeze(0).expand(B, T)
 
         loss = F.cross_entropy(ranks_probs, ranks_probs_true, reduction='mean')
-        predicted_permutations = torch.argsort(ranks_probs, dim=1).detach().cpu().tolist()
-        predicted_permutations = [perm[:len(inp)] for perm, inp in zip(predicted_permutations, inputs)]
-        sorting_index = 1-np.mean([normalized_inversions_number(perm) for perm in predicted_permutations])
+        permutations = self.get_permutaions(ranks_logits, [len(dia) for dia in batch])
+        sorting_index = 1-np.mean([normalized_inversions_number(perm) for perm in permutations])
 
         return loss, sorting_index
+
+    def augment(self, batch):
+        ranks_logits = self.get_logits(batch)
+        permutations = self.get_permutaions(ranks_logits, [len(dia) for dia in batch])
+
+        return [[dia[i] for i in perm] for dia, perm in zip(batch, permutations)]
+
+    @staticmethod
+    def from_checkpoint(path_to_ckpt, map_location=None, **kwargs):
+        return Learner.load_from_checkpoint(
+            path_to_ckpt,
+            map_location=map_location,
+            model=UtteranceSorter(**kwargs)
+        ).model
 
 
 class UtteranceSorter2(nn.Module):
@@ -614,7 +663,7 @@ if __name__ == "__main__":
     )
 
     val_loader = DataLoader(
-        dataset=dataset('.', 'val', fraction=1),
+        dataset=dataset('.', 'val', fraction=0.1),
         batch_size=BATCH_SIZE,
         shuffle=False,
         num_workers=10,
@@ -636,11 +685,11 @@ if __name__ == "__main__":
                 num_attention_heads=4,
                 attention_probs_dropout_prob=0.05,
                 intermediate_size=None,
-                n_layers=2
+                n_layers=4
             ),
             encoder_name='sentence-transformers/all-mpnet-base-v2',
             dropout_prob=0.05,
-            finetune_encoder_layers=2
+            finetune_encoder_layers=1
         )
     else:
         model = UtteranceSorter2(
@@ -675,13 +724,15 @@ if __name__ == "__main__":
         precision="16-mixed",
 
         # logging and checkpointing
+        # val_check_interval=500,
+        # check_val_every_n_epoch=
         logger=True,
         enable_progress_bar=False,
         profiler=None,
         callbacks=[checkpoint_callback],
 
         # check if model is implemented correctly
-        overfit_batches=False,
+        overfit_batches=1,
 
         # check training_step and validation_step doesn't fail
         fast_dev_run=False,

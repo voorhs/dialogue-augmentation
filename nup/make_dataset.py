@@ -25,12 +25,20 @@ names = [
     'Taskmaster1'
 ]
 
+upper_bound = 96
 upper_bounds = {
-    'MS-DC': 250,
-    'MetaLWOZ': 100,
-    'MULTIWOZ2_2': 75,
-    'Disambiguation': 60,
-    'Taskmaster1': 200
+    'MS-DC': min(upper_bound, 250),
+    'MetaLWOZ': min(upper_bound, 100),
+    'MULTIWOZ2_2': min(upper_bound, 75),
+    # 'SGD': upper_bound,
+    # 'SimJointGEN': upper_bound,
+    'KETOD': upper_bound,
+    'FRAMES': upper_bound,
+    'Disambiguation': min(upper_bound, 60),
+    'ABCD': upper_bound,
+    # 'AirDialogue': upper_bound,
+    'BiTOD': upper_bound,
+    'Taskmaster1': min(upper_bound, 200),
 }
 
 tokenizer = AutoTokenizer.from_pretrained('microsoft/mpnet-base', max_length=10000)
@@ -42,7 +50,7 @@ for name in names:
     if name not in upper_bounds.keys():
         for dia in tqdm(dataset, desc=name):
             cur_dia = []
-            if len(dia) == 0 or len(dia) == 1 and (dia[0]['user utterance'] == '' or dia[0]['system response'] == ''):
+            if len(dia) == 0 or len(dia) > 10 or len(dia) == 1 and (dia[0]['user utterance'] == '' or dia[0]['system response'] == ''):
                 continue
             for turn in dia:
                 ut = turn['user utterance']
@@ -57,7 +65,7 @@ for name in names:
         bound = upper_bounds[name]
         for dia in tqdm(dataset, desc=name):
             cur_dia = []
-            if len(dia) == 0 or len(dia) == 1 and (dia[0]['user utterance'] == '' or dia[0]['system response'] == ''):
+            if len(dia) == 0 or len(dia) > 10 or len(dia) == 1 and (dia[0]['user utterance'] == '' or dia[0]['system response'] == ''):
                 continue
             for turn in dia:
                 ut = turn['user utterance']
@@ -101,12 +109,13 @@ for split in ['train', 'test', 'val']:
                 'target': dia[i+1]
             })
         nsp_dataset[split].extend(pairs)
+    shuffle(nsp_dataset[split])
     print(split, len(nsp_dataset[split]))
 
 for split, data in nsp_dataset.items():
-    print(split)
+    print('saving chunks for', split)
     break_points = list(range(0, len(data) - CHUNK_SIZE, CHUNK_SIZE))
-    if split == 'test':
-        del break_points[-1]
+    # if split == 'test':
+    #     del break_points[-1]
     for i in tqdm(break_points):
         json.dump(data[i:i+CHUNK_SIZE], open(f'dataset/{split}/{i//CHUNK_SIZE}.json', 'w'))
