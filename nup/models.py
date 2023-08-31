@@ -183,15 +183,15 @@ class ChainCosine(nn.Module):
         target_batch = []
         for i, length in enumerate(rle):
             start = sum(rle[:i])
-            end = start + length
+            end = start + length - 1
 
-            context_encoding = torch.zeros_like(encodings[0])
-            sec = start-1 if self.context_size is None else max(start, end-3-self.context_size)
-            for j, enc in enumerate(encodings[end-3:sec:-1]):
-                context_encoding += enc * self.tau ** j 
-            context_encoding = torch.concat([encodings[end-2], context_encoding, context_encoding.new_tensor([context_speaker[i]])])
+            context_encoding = encodings[end-2]
+            sec = start-1 if self.context_size is None else max(start, end-2-self.context_size)
+            for enc in encodings[end-3:sec:-1]:
+                context_encoding = (1 - self.tau) * context_encoding + enc * self.tau
+            context_encoding = torch.concat([encodings[end-1], context_encoding, context_encoding.new_tensor([context_speaker[i]])])
 
-            target_encoding = torch.concat([encodings[end-1], context_encoding.new_tensor([target_speaker[i]])])
+            target_encoding = torch.concat([encodings[end], context_encoding.new_tensor([target_speaker[i]])])
             
             context_batch.append(context_encoding)
             target_batch.append(target_encoding)
@@ -225,7 +225,7 @@ class ChainCosine(nn.Module):
             })
         B = len(batch)
         logits = self.get_logits(batch)
-        return F.softmax(logits, dim=1).diag().prod().pow(1/B).cpu().item()
+        return F.softmax(logits, dim=1).diag().log10().mean().cpu().item()
 
     @staticmethod
     def from_checkpoint(path_to_ckpt, map_location=None, **kwargs):
