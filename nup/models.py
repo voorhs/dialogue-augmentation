@@ -91,7 +91,10 @@ class mySentenceTransformer(nn.Module):
 
     def forward(self, sentences: List[str]) -> Union[List[torch.Tensor], List[List[torch.Tensor]]]:
         input = self.tokenizer(sentences, padding='longest', return_tensors='pt')
-        output = self.model(input_ids=input['input_ids'].to(self.model.device))
+        output = self.model(
+            input_ids=input['input_ids'].to(self.model.device),
+            attention_mask=input['attention_mask'].to(self.model.device)
+        )
         
         res = []
         for token_emb, attention in zip(output.last_hidden_state, input['attention_mask']):
@@ -110,7 +113,7 @@ class mySentenceTransformer(nn.Module):
 LR = 5e-4
 WEIGHT_DECAY = 1e-2
 BETAS = (0.9, 0.999)
-BATCH_SIZE = 32
+BATCH_SIZE = 64
 PROJECTION_SIZE = 512
 
 
@@ -144,6 +147,15 @@ class Projector(nn.Module):
 
 class ChainCosine(nn.Module):
     def __init__(self, encoder_name, projection_size, context_size, tau, finetune_encoder_layers: int = 0):
+        """
+        Params
+        ------
+        - `encoder_name`: name of underlying hf model for sentence embedding
+        - `projection_size`: final representation size
+        - `context_size`: number of recent utterances that are encoded into contextual representation, if None then use full context
+        - `tau`: EMA coefficient for context encoding
+        - `finetune_encoder_layers`: number of last layers of hf model to finetune
+        """
         super().__init__()
 
         self.projection_size = projection_size
@@ -169,8 +181,12 @@ class ChainCosine(nn.Module):
         rle = []
         context_speaker = []
         target_speaker = []
+        if self.context_size is None:
+            context_slice = slice(None, None, -1)
+        else:
+            context_slice = slice(-1, -self.context_size-1, -1)
         for item in batch:
-            cur_utterances = [ut['utterance'] for ut in item['context']]+[item['target']['utterance']]
+            cur_utterances = [item['target']['utterance']] + [ut['utterance'] for ut in item['context'][context_slice]]
             utterances.extend(cur_utterances)
             rle.append(len(cur_utterances))
             context_speaker.append(item['context'][-1]['speaker'])
@@ -183,20 +199,23 @@ class ChainCosine(nn.Module):
         target_batch = []
         for i, length in enumerate(rle):
             start = sum(rle[:i])
-            end = start + length - 1
+            end = start + length
 
-            context_encoding = encodings[end-2]
-            sec = start-1 if self.context_size is None else max(start, end-2-self.context_size)
-            for enc in encodings[end-3:sec:-1]:
+            if length == 2:
+                context_encoding = torch.zeros_like(encodings[0])
+            else:   # length > 2
+                context_encoding = encodings[start+2]
+            
+            for enc in encodings[start+3:end]:
                 context_encoding = (1 - self.tau) * context_encoding + enc * self.tau
-            context_encoding = torch.concat([encodings[end-1], context_encoding, context_encoding.new_tensor([context_speaker[i]])])
-
-            target_encoding = torch.concat([encodings[end], context_encoding.new_tensor([target_speaker[i]])])
+            
+            context_encoding = torch.concat([encodings[start+1], context_encoding, context_encoding.new_tensor([context_speaker[i]])])
+            target_encoding = torch.concat([encodings[start], context_encoding.new_tensor([target_speaker[i]])])
             
             context_batch.append(context_encoding)
             target_batch.append(target_encoding)
         
-        # append speaker embeddings
+        # project to joing embedding space
         context_batch = self.context_projector(
             torch.stack(context_batch) 
         )
@@ -647,30 +666,30 @@ if __name__ == "__main__":
 
     import argparse
     ap = argparse.ArgumentParser()
-    ap.add_argument('--model', dest='model', required=True, choices=['chainer', 'sorter', 'sorter-2'])
+    ap.add_argument('--model', dest='model', required=True, choices=['pairwise', 'listwise', 'listwise2'])
     ap.add_argument('--name', dest='name', required=True)
     args = ap.parse_args()
 
 
-    dataset = NUPDataset if args.model == 'chainer' else DialogueDataset
+    dataset = NUPDataset if args.model == 'pairwise' else DialogueDataset
 
     train_loader = DataLoader(
-        dataset=dataset('.', 'train', fraction=1),
+        dataset=dataset('.', 'train', fraction=1.),
         batch_size=BATCH_SIZE,
         shuffle=True,
-        num_workers=10,
+        num_workers=6,
         collate_fn=collate_fn
     )
 
     val_loader = DataLoader(
-        dataset=dataset('.', 'val', fraction=0.1),
+        dataset=dataset('.', 'val', fraction=1.),
         batch_size=BATCH_SIZE,
         shuffle=False,
-        num_workers=10,
+        num_workers=6,
         collate_fn=collate_fn
     )
 
-    if args.model == 'chainer':
+    if args.model == 'pairwise':
         model = ChainCosine(
             encoder_name='sentence-transformers/all-mpnet-base-v2',
             projection_size=PROJECTION_SIZE,
@@ -678,7 +697,7 @@ if __name__ == "__main__":
             tau=0.5,
             finetune_encoder_layers=1
         )
-    elif args.model == 'sorter':
+    elif args.model == 'listwise':
         model = UtteranceSorter(
             config=TransformerConfig(
                 hidden_size=None,
@@ -708,15 +727,16 @@ if __name__ == "__main__":
         mode='max',
     )
 
-    # logger = pl.loggers.TensorBoardLogger(
-    #     save_dir='.',
-    #     version=args.name,
-    #     name='lightning_logs'
-    # )
+    logger = pl.loggers.TensorBoardLogger(
+        save_dir='.',
+        version=args.name,
+        name='lightning_logs'
+    )
 
     trainer = pl.Trainer(
-        # max_epochs=1,
-        max_time={'minutes': 1},
+        max_epochs=1,
+        max_time={'hours': 24},
+        # max_time={'minutes': 2},
 
         # hardware settings
         accelerator='gpu',
@@ -724,15 +744,15 @@ if __name__ == "__main__":
         precision="16-mixed",
 
         # logging and checkpointing
-        # val_check_interval=500,
+        val_check_interval=5000,
         # check_val_every_n_epoch=
-        logger=True,
+        logger=logger,
         enable_progress_bar=False,
         profiler=None,
         callbacks=[checkpoint_callback],
 
         # check if model is implemented correctly
-        overfit_batches=1,
+        overfit_batches=False,
 
         # check training_step and validation_step doesn't fail
         fast_dev_run=False,
