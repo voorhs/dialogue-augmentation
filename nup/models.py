@@ -12,6 +12,7 @@ from dataclasses import dataclass
 from bisect import bisect_left
 import os
 from collections import defaultdict
+from transformers.models.mpnet.modeling_mpnet import create_position_ids_from_input_ids
 
 # os.chdir('nup')
 
@@ -145,7 +146,17 @@ class Projector(nn.Module):
         return F.normalize(self.final(x), dim=1)
 
 
-class ChainCosine(nn.Module):
+class LightningCkptLoadable:
+    @staticmethod
+    def from_checkpoint(path_to_ckpt, model, map_location=None):
+        return Learner.load_from_checkpoint(
+            path_to_ckpt,
+            map_location=map_location,
+            model=model
+        ).model
+
+
+class ChainCosine(nn.Module, LightningCkptLoadable):
     def __init__(self, encoder_name, projection_size, context_size, tau, finetune_encoder_layers: int = 0):
         """
         Params
@@ -390,20 +401,74 @@ class RankerHead(nn.Module):
         return x.squeeze(-1)
 
 
-def normalized_inversions_number(arr):
-    """Function to count number of inversions in a permutation of 0, 1, ..., n-1."""
-    n = len(arr)
-    v = list(range(n))
-    ans = 0
-    for i in range(n):
-        itr = bisect_left(v, arr[i])-1
-        ans += itr
-        del v[itr]
-    max_inversions = n * (n - 1) // 2
-    return ans / max_inversions
+class BaseUtteranceSorter:
+    def augment(self, batch):
+        device = self.model.device
+        dia_lens = [len(dia) for dia in batch]
+
+        ranks_logits = self.get_logits(batch)
+        mask = self._make_attention_mask(dia_lens, device)
+        unbinded_ranks_logits = self._unbind_logits(ranks_logits, mask, dia_lens)
+        permutations = self._to_permutations(unbinded_ranks_logits)
+
+        return [[dia[i] for i in perm] for dia, perm in zip(batch, permutations)]
+    
+    def forward(self, batch):
+        device = self.model.device
+        dia_lens = [len(dia) for dia in batch]
+
+        ranks_logits = self.get_logits(batch)
+
+        # zero attention to padding token-utterances
+        mask = self._make_attention_mask(dia_lens, device)
+        ranks_logits.masked_fill_(mask, -torch.inf)
+
+        # calculate loss
+        ranks_probs = F.softmax(ranks_logits, dim=1)
+        _, T = ranks_logits.shape
+        ranks_probs_true = torch.stack([F.pad(torch.linspace(1, 0, length, device=device), pad=(0, T-length), value=0) for length in dia_lens])
+        loss = F.cross_entropy(ranks_probs, ranks_probs_true, reduction='mean')
+
+        # calculate metric
+        unbinded_ranks_logits = self._unbind_logits(ranks_logits, mask, dia_lens)
+        permutations = self._to_permutations(unbinded_ranks_logits)
+        sorting_index = 1-np.mean([self._normalized_inversions_number(perm) for perm in permutations])
+
+        return loss, sorting_index
+    
+    @staticmethod
+    def _to_permutations(unbinded_ranks_logits):
+        """permutations with respect to descending order"""
+        return [logits.argsort(descending=True) for logits in unbinded_ranks_logits]
+
+    @staticmethod
+    def _make_attention_mask(dia_lens, device):
+        """this mask indicates padding tokens(utterances)"""
+        T = max(dia_lens)
+        dia_lens_expanded = torch.tensor(dia_lens, device=device)[:, None]
+        max_dia_len_expanded = torch.arange(T, device=device)[None, :]
+        return dia_lens_expanded <= max_dia_len_expanded
+    
+    @staticmethod
+    def _unbind_logits(logits, mask, dia_lens):
+        """get list of tensors with logits corresponding to tokens(utterances) that are not padding ones only"""
+        return logits[~mask].detach().cpu().split(dia_lens)
+
+    @staticmethod
+    def _normalized_inversions_number(arr):
+        """Function to count number of inversions in a permutation of 0, 1, ..., n-1."""
+        n = len(arr)
+        v = list(range(n))
+        ans = 0
+        for i in range(n):
+            itr = bisect_left(v, arr[i])
+            ans += itr
+            del v[itr]
+        max_inversions = n * (n - 1) / 2
+        return ans / max_inversions
 
 
-class UtteranceSorter(nn.Module):
+class UtteranceSorter(BaseUtteranceSorter, nn.Module, LightningCkptLoadable):
     def __init__(self, config: TransformerConfig, encoder_name, dropout_prob, finetune_encoder_layers: int = 0):
         super().__init__()
 
@@ -441,41 +506,8 @@ class UtteranceSorter(nn.Module):
         # (B, T)
         return self.ranker_head(hidden_states)
 
-    def get_permutaions(self, ranks_logits, dia_lens):
-        permutations = torch.argsort(ranks_logits, dim=1).detach().cpu().tolist()
-        return [perm[:length] for perm, length in zip(permutations, dia_lens)]
-    
-    def forward(self, batch):
-        device = self.encoder.model.device
 
-        ranks_logits = self.get_logits(batch)
-        ranks_probs = F.softmax(ranks_logits, dim=1)
-        
-        B, T = ranks_logits.shape
-        ranks_probs_true = torch.linspace(0, 1, T, device=device).unsqueeze(0).expand(B, T)
-
-        loss = F.cross_entropy(ranks_probs, ranks_probs_true, reduction='mean')
-        permutations = self.get_permutaions(ranks_logits, [len(dia) for dia in batch])
-        sorting_index = 1-np.mean([normalized_inversions_number(perm) for perm in permutations])
-
-        return loss, sorting_index
-
-    def augment(self, batch):
-        ranks_logits = self.get_logits(batch)
-        permutations = self.get_permutaions(ranks_logits, [len(dia) for dia in batch])
-
-        return [[dia[i] for i in perm] for dia, perm in zip(batch, permutations)]
-
-    @staticmethod
-    def from_checkpoint(path_to_ckpt, map_location=None, **kwargs):
-        return Learner.load_from_checkpoint(
-            path_to_ckpt,
-            map_location=map_location,
-            model=UtteranceSorter(**kwargs)
-        ).model
-
-
-class UtteranceSorter2(nn.Module):
+class UtteranceSorter2(BaseUtteranceSorter, nn.Module, LightningCkptLoadable):
     def __init__(self, hf_model_name, dropout_prob, finetune_encoder_layers: int = 1):
         super().__init__()
 
@@ -485,11 +517,10 @@ class UtteranceSorter2(nn.Module):
 
         self.ranker_head = RankerHead(self.model.config.hidden_size, dropout_prob)
     
-    def _tokenize(self, batch, device):
+    def _tokenize(self, batch, device, padding_idx=1):  # padding_idx that is used in MPNet
         # group utterances by turns in order to tokenize and pad them jointly
         uts_grouped_by_turn = defaultdict(list)
-        dia_lens = [len(dia) for dia in batch]
-        max_n_utterances = max(dia_lens)
+        max_n_utterances = max(len(dia) for dia in batch)
 
         for dia in batch:
             for i, item in enumerate(dia):
@@ -523,12 +554,25 @@ class UtteranceSorter2(nn.Module):
             cls_idx = sum(uts_lens[:i])
             extended_attention_mask[:, :, cls_idx] = 1
         
-        return {"input_ids": input_ids.to(device), "attention_mask": extended_attention_mask.to(device)}, uts_lens, dia_lens
+        # assign positions within each utterance
+        position_ids = []
+        for group in uts_grouped_by_turn_tokenized:
+            ids = create_position_ids_from_input_ids(group['input_ids'], padding_idx=padding_idx)
+            position_ids.append(ids)
+        position_ids = torch.cat(position_ids, dim=1)
+        
+        inputs = {
+            "input_ids": input_ids.to(device),
+            "attention_mask": extended_attention_mask.to(device),
+            "position_ids": position_ids.to(device)
+        }
+        
+        return inputs, uts_lens
     
-    def forward(self, batch):
+    def get_logits(self, batch):
         device = self.model.device
 
-        inputs, uts_lens, dia_lens = self._tokenize(batch, device)
+        inputs, uts_lens = self._tokenize(batch, device)
         outputs = self.model(**inputs)
 
         hidden_states = []
@@ -538,24 +582,10 @@ class UtteranceSorter2(nn.Module):
         
         # (B, T, H)
         hidden_states = torch.stack(hidden_states, dim=1)
-        B, T, _ = hidden_states.shape
 
         # (B, T)
-        ranks_logits = self.ranker_head(hidden_states)
-        dia_lens_tensor = torch.tensor(dia_lens, device=device)[:, None]
-        is_padded_utterance = torch.arange(T, device=device)[None, :].expand(B, T) > dia_lens_tensor
-        ranks_logits = ranks_logits.masked_fill(is_padded_utterance, -torch.inf)
+        return self.ranker_head(hidden_states)
 
-        ranks_probs = F.softmax(ranks_logits, dim=1)
-
-        ranks_probs_true = torch.linspace(0, 1, T, device=device).unsqueeze(0).expand(B, T)
-
-        loss = F.cross_entropy(ranks_probs, ranks_probs_true, reduction='mean')
-        predicted_permutations = torch.argsort(ranks_probs, dim=1).detach().cpu().tolist()
-        predicted_permutations = [perm[:length] for perm, length in zip(predicted_permutations, dia_lens)]
-        sorting_index = 1-np.mean([normalized_inversions_number(perm) for perm in predicted_permutations])
-
-        return loss, sorting_index
 
 
 class Learner(pl.LightningModule):
@@ -710,11 +740,11 @@ if __name__ == "__main__":
             dropout_prob=0.05,
             finetune_encoder_layers=1
         )
-    else:
+    elif args.model == 'listwise2':
         model = UtteranceSorter2(
             hf_model_name='sentence-transformers/all-mpnet-base-v2',
             dropout_prob=0.05,
-            finetune_encoder_layers=1
+            finetune_encoder_layers=3
         )
 
     learner = Learner(model)
