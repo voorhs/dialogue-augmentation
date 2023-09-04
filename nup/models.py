@@ -403,7 +403,7 @@ class RankerHead(nn.Module):
 
 class BaseUtteranceSorter:
     def augment(self, batch):
-        device = self.model.device
+        device = self.device
         dia_lens = [len(dia) for dia in batch]
 
         ranks_logits = self.get_logits(batch)
@@ -414,7 +414,7 @@ class BaseUtteranceSorter:
         return [[dia[i] for i in perm] for dia, perm in zip(batch, permutations)]
     
     def forward(self, batch):
-        device = self.model.device
+        device = self.device
         dia_lens = [len(dia) for dia in batch]
 
         ranks_logits = self.get_logits(batch)
@@ -485,8 +485,12 @@ class UtteranceSorter(BaseUtteranceSorter, nn.Module, LightningCkptLoadable):
         self.transformer = nn.ModuleList([TransformerBlock(config) for _ in range(config.n_layers)])
         self.ranker_head = RankerHead(self.hidden_size, dropout_prob)
 
+    @property
+    def device(self):
+        return self.encoder.model.device
+
     def get_logits(self, batch):
-        device = self.encoder.model.device
+        device = self.device
 
         inputs = []
         for dia in batch:
@@ -516,6 +520,10 @@ class UtteranceSorter2(BaseUtteranceSorter, nn.Module, LightningCkptLoadable):
         freeze_hf_model(self.model, finetune_encoder_layers)
 
         self.ranker_head = RankerHead(self.model.config.hidden_size, dropout_prob)
+    
+    @property
+    def device(self):
+        return self.model.device
     
     def _tokenize(self, batch, device, padding_idx=1):  # padding_idx that is used in MPNet
         # group utterances by turns in order to tokenize and pad them jointly
@@ -570,7 +578,7 @@ class UtteranceSorter2(BaseUtteranceSorter, nn.Module, LightningCkptLoadable):
         return inputs, uts_lens
     
     def get_logits(self, batch):
-        device = self.model.device
+        device = self.device
 
         inputs, uts_lens = self._tokenize(batch, device)
         outputs = self.model(**inputs)
@@ -707,7 +715,7 @@ if __name__ == "__main__":
         dataset=dataset('.', 'train', fraction=1.),
         batch_size=BATCH_SIZE,
         shuffle=True,
-        num_workers=6,
+        num_workers=3,
         collate_fn=collate_fn
     )
 
@@ -715,7 +723,7 @@ if __name__ == "__main__":
         dataset=dataset('.', 'val', fraction=1.),
         batch_size=BATCH_SIZE,
         shuffle=False,
-        num_workers=6,
+        num_workers=3,
         collate_fn=collate_fn
     )
 
@@ -738,7 +746,7 @@ if __name__ == "__main__":
             ),
             encoder_name='sentence-transformers/all-mpnet-base-v2',
             dropout_prob=0.05,
-            finetune_encoder_layers=1
+            finetune_encoder_layers=2
         )
     elif args.model == 'listwise2':
         model = UtteranceSorter2(
