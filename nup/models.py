@@ -8,7 +8,7 @@ import torch
 import lightning.pytorch as pl
 import torch.nn.functional as F
 import numpy as np
-from dataclasses import dataclass
+from dataclasses import dataclass, asdict
 from bisect import bisect_left
 import os
 from collections import defaultdict
@@ -111,10 +111,8 @@ class mySentenceTransformer(nn.Module):
         return res
 
 
-LR = 5e-4
 WEIGHT_DECAY = 1e-2
 BETAS = (0.9, 0.999)
-BATCH_SIZE = 64
 PROJECTION_SIZE = 512
 
 
@@ -185,6 +183,14 @@ class ChainCosine(nn.Module, LightningCkptLoadable):
             input_size=self.sentence_embedding_dimension+1,
             output_size=self.projection_size
         )
+    
+    def get_hparams(self):
+        return {
+            "projection_size": self.projection_size,
+            "tau": self.tau,
+            "sentence_embedding_dimension": self.sentence_embedding_dimension,
+            "context_size": self.context_size
+        }
 
     def get_logits(self, batch):
         # collate utterances to list and get sentence encodings
@@ -432,7 +438,7 @@ class BaseUtteranceSorter:
         # calculate metric
         unbinded_ranks_logits = self._unbind_logits(ranks_logits, mask, dia_lens)
         permutations = self._to_permutations(unbinded_ranks_logits)
-        sorting_index = 1-np.mean([self._normalized_inversions_number(perm) for perm in permutations])
+        sorting_index = 1-np.mean([self._normalized_inversions_count(perm) for perm in permutations])
 
         return loss, sorting_index
     
@@ -455,7 +461,7 @@ class BaseUtteranceSorter:
         return logits[~mask].detach().cpu().split(dia_lens)
 
     @staticmethod
-    def _normalized_inversions_number(arr):
+    def _normalized_inversions_count(arr):
         """Function to count number of inversions in a permutation of 0, 1, ..., n-1."""
         n = len(arr)
         v = list(range(n))
@@ -472,6 +478,10 @@ class UtteranceSorter(BaseUtteranceSorter, nn.Module, LightningCkptLoadable):
     def __init__(self, config: TransformerConfig, encoder_name, dropout_prob, finetune_encoder_layers: int = 0):
         super().__init__()
 
+        self.encoder_name = encoder_name
+        self.dropout_prob = dropout_prob
+        self.finetune_encoder_layers = finetune_encoder_layers
+
         self.encoder = mySentenceTransformer(encoder_name)
         self.encoder.requires_grad_(False)
         freeze_hf_model(self.encoder.model, finetune_encoder_layers)
@@ -485,12 +495,25 @@ class UtteranceSorter(BaseUtteranceSorter, nn.Module, LightningCkptLoadable):
         self.transformer = nn.ModuleList([TransformerBlock(config) for _ in range(config.n_layers)])
         self.ranker_head = RankerHead(self.hidden_size, dropout_prob)
 
+        self.config = config
+
+    def get_hparams(self):
+        res = {
+            "encoder_name": self.encoder_name,
+            "head_dropout_prob": self.dropout_prob,
+            "finetune_encoder_layers": self.finetune_encoder_layers,
+            "hidden_size": self.hidden_size
+        }
+        res.update(asdict(self.config))
+        return res
+
     @property
     def device(self):
         return self.encoder.model.device
 
     def get_logits(self, batch):
         device = self.device
+        dia_lens = [len(dia) for dia in batch]
 
         inputs = []
         for dia in batch:
@@ -498,8 +521,8 @@ class UtteranceSorter(BaseUtteranceSorter, nn.Module, LightningCkptLoadable):
             encoded_dialogue = torch.unbind(utterances)
             inputs.append(encoded_dialogue)
         
-        T = max(len(inp) for inp in inputs)
-        attention_mask = torch.BoolTensor([len(inp) * [False] + (T-len(inp)) * [True] for inp in inputs]).to(device)
+        T = max(dia_lens)
+        attention_mask = torch.BoolTensor([length * [False] + (T-length) * [True] for length in dia_lens]).to(device)
         padded_inputs = torch.stack([torch.stack(inp + (T-len(inp)) * (inp[0].new_zeros(self.hidden_size),)) for inp in inputs])
 
         # (B, T, H)
@@ -515,12 +538,23 @@ class UtteranceSorter2(BaseUtteranceSorter, nn.Module, LightningCkptLoadable):
     def __init__(self, hf_model_name, dropout_prob, finetune_encoder_layers: int = 1):
         super().__init__()
 
+        self.hf_model_name = hf_model_name
+        self.dropout_prob = dropout_prob
+        self.finetune_encoder_layers = finetune_encoder_layers
+
         self.model = AutoModel.from_pretrained(hf_model_name)
         self.tokenizer = AutoTokenizer.from_pretrained(hf_model_name)    
         freeze_hf_model(self.model, finetune_encoder_layers)
 
         self.ranker_head = RankerHead(self.model.config.hidden_size, dropout_prob)
     
+    def get_hparams(self):
+        return {
+            "hf_model_name": self.hf_model_name,
+            "head_dropout_prob": self.dropout_prob,
+            "finetune_encoder_layers": self.finetune_encoder_layers,
+        }
+
     @property
     def device(self):
         return self.model.device
@@ -595,7 +629,6 @@ class UtteranceSorter2(BaseUtteranceSorter, nn.Module, LightningCkptLoadable):
         return self.ranker_head(hidden_states)
 
 
-
 class Learner(pl.LightningModule):
     def __init__(self, model):
         super().__init__()
@@ -648,7 +681,10 @@ class Learner(pl.LightningModule):
         )
     
     def on_train_start(self):
-        self.logger.log_hyperparams(self.optimizers().defaults)
+        optim_hparams = self.optimizers().defaults
+        model_hparams = self.model.get_hparams()
+        model_hparams.update(optim_hparams)
+        self.logger.log_hyperparams(model_hparams)
 
     def configure_optimizers(self, config):
         """Taken from https://github.com/karpathy/minGPT/blob/3ed14b2cec0dfdad3f4b2831f2b4a86d11aef150/mingpt/model.py#L136"""
@@ -708,13 +744,49 @@ if __name__ == "__main__":
     ap.add_argument('--name', dest='name', required=True)
     args = ap.parse_args()
 
+    if args.model == 'pairwise':
+        model = ChainCosine(
+            encoder_name='sentence-transformers/all-mpnet-base-v2',
+            projection_size=PROJECTION_SIZE,
+            context_size=6,
+            tau=0.5,
+            finetune_encoder_layers=1
+        )
+        LR = 5e-4
+        BATCH_SIZE = 64
+    elif args.model == 'listwise':
+        model = UtteranceSorter(
+            config=TransformerConfig(
+                hidden_size=None,
+                num_attention_heads=4,
+                attention_probs_dropout_prob=0.025,
+                intermediate_size=None,
+                n_layers=4
+            ),
+            encoder_name='sentence-transformers/all-mpnet-base-v2',
+            dropout_prob=0.025,
+            finetune_encoder_layers=1
+        )
+        LR = 1e-4
+        BATCH_SIZE = 64
+    elif args.model == 'listwise2':
+        model = UtteranceSorter2(
+            hf_model_name='sentence-transformers/all-mpnet-base-v2',
+            dropout_prob=0.025,
+            finetune_encoder_layers=1
+        )
+        LR = 1e-4
+        BATCH_SIZE = 32
+
+    learner = Learner(model)
+    learner.configure_optimizers = partial(learner.configure_optimizers, config={'lr': LR, 'weight_decay': WEIGHT_DECAY, 'betas': BETAS})
 
     dataset = NUPDataset if args.model == 'pairwise' else DialogueDataset
 
     train_loader = DataLoader(
         dataset=dataset('.', 'train', fraction=1.),
         batch_size=BATCH_SIZE,
-        shuffle=True,
+        shuffle=False,
         num_workers=3,
         collate_fn=collate_fn
     )
@@ -726,37 +798,6 @@ if __name__ == "__main__":
         num_workers=3,
         collate_fn=collate_fn
     )
-
-    if args.model == 'pairwise':
-        model = ChainCosine(
-            encoder_name='sentence-transformers/all-mpnet-base-v2',
-            projection_size=PROJECTION_SIZE,
-            context_size=6,
-            tau=0.5,
-            finetune_encoder_layers=1
-        )
-    elif args.model == 'listwise':
-        model = UtteranceSorter(
-            config=TransformerConfig(
-                hidden_size=None,
-                num_attention_heads=4,
-                attention_probs_dropout_prob=0.05,
-                intermediate_size=None,
-                n_layers=4
-            ),
-            encoder_name='sentence-transformers/all-mpnet-base-v2',
-            dropout_prob=0.05,
-            finetune_encoder_layers=2
-        )
-    elif args.model == 'listwise2':
-        model = UtteranceSorter2(
-            hf_model_name='sentence-transformers/all-mpnet-base-v2',
-            dropout_prob=0.05,
-            finetune_encoder_layers=3
-        )
-
-    learner = Learner(model)
-    learner.configure_optimizers = partial(learner.configure_optimizers, config={'lr': LR, 'weight_decay': WEIGHT_DECAY, 'betas': BETAS})
 
     checkpoint_callback = ModelCheckpoint(
         monitor='val_metric',
@@ -774,7 +815,9 @@ if __name__ == "__main__":
     trainer = pl.Trainer(
         max_epochs=1,
         max_time={'hours': 24},
+        
         # max_time={'minutes': 2},
+        # max_steps=30,
 
         # hardware settings
         accelerator='gpu',
@@ -783,11 +826,12 @@ if __name__ == "__main__":
 
         # logging and checkpointing
         val_check_interval=5000,
-        # check_val_every_n_epoch=
+        # check_val_every_n_epoch=1,
         logger=logger,
         enable_progress_bar=False,
         profiler=None,
         callbacks=[checkpoint_callback],
+        # log_every_n_steps=1,
 
         # check if model is implemented correctly
         overfit_batches=False,
