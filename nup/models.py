@@ -1,7 +1,7 @@
 from torch.utils.data import Dataset
 import math
 import json
-from typing import List, Literal, Union
+from typing import List, Literal
 from transformers import AutoModel, AutoTokenizer
 import torch.nn as nn
 import torch
@@ -13,6 +13,7 @@ from bisect import bisect_left
 import os
 from collections import defaultdict
 from transformers.models.mpnet.modeling_mpnet import create_position_ids_from_input_ids
+from torch.optim.lr_scheduler import LambdaLR
 
 # os.chdir('nup')
 
@@ -25,7 +26,71 @@ class NUPDataset(Dataset):
         if split == 'train':
             max_n_chunks = 2556
         elif split == 'test' or split == 'val':
-            max_n_chunks = 142
+            max_n_chunks = 141
+
+        if isinstance(fraction, float):
+            self.fraction = min(1., max(0., fraction))
+            self.n_chunks = math.ceil(self.fraction * max_n_chunks)
+        elif isinstance(fraction, int):
+            self.fraction = min(max_n_chunks, max(1, fraction))
+            self.n_chunks = fraction
+        else:
+            raise ValueError('fraction must be int or float')
+
+        self.len = self.n_chunks * self.chunk_size
+    
+    def __len__(self):
+        return self.len
+    
+    def __getitem__(self, i):
+        """
+        Loads one chunk and returns one dialogue, represented with an object of the following schema:
+        ```
+        {
+            "type": "object",
+            "properties":
+            {
+                "context":
+                {
+                    "type": "array",
+                    "items":
+                    {
+                        "type": "object",
+                        "properties":
+                        {
+                            "utterance": {"type": "string"},
+                            "speaker": {"type": "number"}
+                        }
+                    }
+                },
+                "target":
+                {
+                    "type": "object",
+                    "properties":
+                    {
+                        "utterance": {"type": "string"},
+                        "speaker": {"type": "number"}
+                    }
+                }
+            }
+        }
+        ```"""
+        i_chunk = math.floor(i / self.chunk_size)
+        idx_within_chunk = i % self.chunk_size
+        item = json.load(open(f'{self.path}/pairs/{self.split}/{i_chunk}.json', 'r'))[idx_within_chunk]
+        return item
+
+
+class DialogueDataset(Dataset):
+    chunk_size = 512
+    def __init__(self, path, split: Literal['train', 'test', 'val'], fraction=1.):
+        self.split = split
+        self.path = path
+
+        if split == 'train':
+            max_n_chunks = 880
+        elif split == 'test' or split == 'val':
+            max_n_chunks = 48
 
         if isinstance(fraction, float):
             self.fraction = min(1., max(0., fraction))
@@ -60,14 +125,8 @@ class NUPDataset(Dataset):
         ```"""
         i_chunk = math.floor(i / self.chunk_size)
         idx_within_chunk = i % self.chunk_size
-        item = json.load(open(f'{self.path}/dataset/{self.split}/{i_chunk}.json', 'r'))[idx_within_chunk]
+        item = json.load(open(f'{self.path}/dialogues/{self.split}/{i_chunk}.json', 'r'))[idx_within_chunk]
         return item
-
-
-class DialogueDataset(NUPDataset):
-    def __getitem__(self, i):
-        item = super().__getitem__(i)
-        return item['context'] + [item['target']]
 
 
 def collate_fn(batch):
@@ -90,7 +149,7 @@ class mySentenceTransformer(nn.Module):
         self.model = AutoModel.from_pretrained(model_name)
         self.tokenizer = AutoTokenizer.from_pretrained(model_name)
 
-    def forward(self, sentences: List[str]) -> Union[List[torch.Tensor], List[List[torch.Tensor]]]:
+    def forward(self, sentences: List[str]) -> List[torch.Tensor]:
         input = self.tokenizer(sentences, padding='longest', return_tensors='pt')
         output = self.model(
             input_ids=input['input_ids'].to(self.model.device),
@@ -399,7 +458,6 @@ class RankerHead(nn.Module):
 
         self.dropout = nn.Dropout(dropout_prob)
         self.ranker = nn.Linear(hidden_size, 1)
-        self.ranker.bias.data.zero_()
     
     def forward(self, x: torch.Tensor):
         x = self.dropout(x)
@@ -407,7 +465,12 @@ class RankerHead(nn.Module):
         return x.squeeze(-1)
 
 
-class BaseUtteranceSorter:
+class BaseUtteranceSorter(nn.Module):
+    def __init__(self):
+        super().__init__()
+        self.loss_fn = nn.KLDivLoss(reduction='batchmean')
+        # self.loss_fn = nn.CrossEntropyLoss(reduction='mean')
+
     def augment(self, batch):
         device = self.device
         dia_lens = [len(dia) for dia in batch]
@@ -418,7 +481,7 @@ class BaseUtteranceSorter:
         permutations = self._to_permutations(unbinded_ranks_logits)
 
         return [[dia[i] for i in perm] for dia, perm in zip(batch, permutations)]
-    
+
     def forward(self, batch):
         device = self.device
         dia_lens = [len(dia) for dia in batch]
@@ -430,10 +493,9 @@ class BaseUtteranceSorter:
         ranks_logits.masked_fill_(mask, -torch.inf)
 
         # calculate loss
-        ranks_probs = F.softmax(ranks_logits, dim=1)
         _, T = ranks_logits.shape
-        ranks_probs_true = torch.stack([F.pad(torch.linspace(1, 0, length, device=device), pad=(0, T-length), value=0) for length in dia_lens])
-        loss = F.cross_entropy(ranks_probs, ranks_probs_true, reduction='mean')
+        ranks_true = self._make_true_ranks(T, dia_lens, device)
+        loss = self.loss_fn(ranks_logits, ranks_true)
 
         # calculate metric
         unbinded_ranks_logits = self._unbind_logits(ranks_logits, mask, dia_lens)
@@ -441,7 +503,23 @@ class BaseUtteranceSorter:
         sorting_index = 1-np.mean([self._normalized_inversions_count(perm) for perm in permutations])
 
         return loss, sorting_index
-    
+
+    @staticmethod
+    def _make_true_ranks(T, dia_lens, device):
+        res = []
+
+        def sigmoid(x):
+            """sigmoid for x in range [0, 1]"""
+            return 1 / (1 + (2 * x) ** 5)
+        
+        for length in dia_lens:
+            ranks = torch.linspace(0, 1, length, device=device)
+            padded_ranks = F.pad(ranks, pad=(0, T-length), value=1)
+            shaped_ranks = sigmoid(padded_ranks)
+            res.append(shaped_ranks)
+        
+        return torch.stack(res)
+
     @staticmethod
     def _to_permutations(unbinded_ranks_logits):
         """permutations with respect to descending order"""
@@ -488,8 +566,10 @@ class UtteranceSorter(BaseUtteranceSorter, nn.Module, LightningCkptLoadable):
 
         sentence_embedding_dimension = self.encoder.model.config.hidden_size
         self.hidden_size = sentence_embedding_dimension // 2
+
+        self.speaker_embeddings = nn.Embedding(2, 8)
         
-        self.projector = Projector(sentence_embedding_dimension, self.hidden_size)
+        self.projector = Projector(sentence_embedding_dimension, self.hidden_size - 8)
         config.hidden_size = self.hidden_size
         config.intermediate_size = 4 * self.hidden_size
         self.transformer = nn.ModuleList([TransformerBlock(config) for _ in range(config.n_layers)])
@@ -517,9 +597,15 @@ class UtteranceSorter(BaseUtteranceSorter, nn.Module, LightningCkptLoadable):
 
         inputs = []
         for dia in batch:
-            utterances = self.projector(self.encoder([f"[{item['speaker']}] {item['utterance']}" for item in dia]))
-            encoded_dialogue = torch.unbind(utterances)
-            inputs.append(encoded_dialogue)
+            speaker_ids = torch.tensor([item['speaker'] for item in dia], device=device, dtype=torch.long)
+            speaker_embeddings = self.speaker_embeddings(speaker_ids)
+
+            sentence_embeddings = self.encoder([item['utterance'] for item in dia])
+            sentence_embeddings = self.projector(sentence_embeddings)
+            
+            utterance_embeddings = torch.cat([sentence_embeddings, speaker_embeddings], dim=1)
+            utterance_embeddings = torch.unbind(utterance_embeddings)
+            inputs.append(utterance_embeddings)
         
         T = max(dia_lens)
         attention_mask = torch.BoolTensor([length * [False] + (T-length) * [True] for length in dia_lens]).to(device)
@@ -724,12 +810,21 @@ class Learner(pl.LightningModule):
             {"params": [param_dict[pn] for pn in sorted(list(no_decay))], "weight_decay": 0.0},
         ]
         optimizer = torch.optim.AdamW(optim_groups, lr=config['lr'], betas=config['betas'])
-        return optimizer
+        def lr_foo(step, warmup_steps=200):
+            step = step % warmup_steps
+            lr_scale = (step + 1) / warmup_steps
+            return lr_scale
+
+        scheduler = LambdaLR(
+            optimizer,
+            lr_lambda=lr_foo
+        )
+        return {"optimizer": optimizer, "lr_scheduler": {"scheduler": scheduler, "interval": "step", 'frequency': 1}}
 
 
 if __name__ == "__main__":
     from torch.utils.data import DataLoader
-    from lightning.pytorch.callbacks import ModelCheckpoint
+    from lightning.pytorch.callbacks import ModelCheckpoint, LearningRateMonitor
     from datetime import datetime
     torch.set_float32_matmul_precision('medium')
     import os
@@ -759,23 +854,24 @@ if __name__ == "__main__":
             config=TransformerConfig(
                 hidden_size=None,
                 num_attention_heads=4,
-                attention_probs_dropout_prob=0.025,
+                attention_probs_dropout_prob=0.02,
                 intermediate_size=None,
                 n_layers=4
             ),
             encoder_name='sentence-transformers/all-mpnet-base-v2',
-            dropout_prob=0.025,
+            dropout_prob=0.02,
             finetune_encoder_layers=1
         )
-        LR = 1e-4
-        BATCH_SIZE = 64
+        LR = 3e-6
+        BATCH_SIZE = 512
     elif args.model == 'listwise2':
+        # exit()
         model = UtteranceSorter2(
             hf_model_name='sentence-transformers/all-mpnet-base-v2',
-            dropout_prob=0.025,
+            dropout_prob=0.,
             finetune_encoder_layers=1
         )
-        LR = 1e-4
+        LR = 1e-5
         BATCH_SIZE = 32
 
     learner = Learner(model)
@@ -792,7 +888,7 @@ if __name__ == "__main__":
     )
 
     val_loader = DataLoader(
-        dataset=dataset('.', 'val', fraction=1.),
+        dataset=dataset('.', 'val', fraction=.5),
         batch_size=BATCH_SIZE,
         shuffle=False,
         num_workers=3,
@@ -806,14 +902,16 @@ if __name__ == "__main__":
         mode='max',
     )
 
+    lr_monitor = LearningRateMonitor(logging_interval='step')
+
     logger = pl.loggers.TensorBoardLogger(
         save_dir='.',
         version=args.name,
-        name='lightning_logs'
+        name='logs/training'
     )
 
     trainer = pl.Trainer(
-        max_epochs=1,
+        # max_epochs=1,
         max_time={'hours': 24},
         
         # max_time={'minutes': 2},
@@ -825,12 +923,12 @@ if __name__ == "__main__":
         precision="16-mixed",
 
         # logging and checkpointing
-        val_check_interval=5000,
+        val_check_interval=400,
         # check_val_every_n_epoch=1,
         logger=logger,
         enable_progress_bar=False,
         profiler=None,
-        callbacks=[checkpoint_callback],
+        callbacks=[checkpoint_callback, lr_monitor],
         # log_every_n_steps=1,
 
         # check if model is implemented correctly
@@ -844,6 +942,9 @@ if __name__ == "__main__":
     print('Started at', datetime.now().strftime("%H:%M:%S %d-%m-%Y"))
 
     # do magic!
-    trainer.fit(learner, train_loader, val_loader)
+    trainer.fit(
+        learner, train_loader, val_loader,
+        # ckpt_path='logs/training/listwise-sigmoid/checkpoints/last.ckpt'
+    )
 
     print('Finished at', datetime.now().strftime("%H:%M:%S %d-%m-%Y"))
