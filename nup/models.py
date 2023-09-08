@@ -468,8 +468,8 @@ class RankerHead(nn.Module):
 class BaseUtteranceSorter(nn.Module):
     def __init__(self):
         super().__init__()
-        self.loss_fn = nn.KLDivLoss(reduction='batchmean')
         # self.loss_fn = nn.CrossEntropyLoss(reduction='mean')
+        self.loss_fn = nn.KLDivLoss(reduction='batchmean')
 
     def augment(self, batch):
         device = self.device
@@ -490,12 +490,13 @@ class BaseUtteranceSorter(nn.Module):
 
         # zero attention to padding token-utterances
         mask = self._make_attention_mask(dia_lens, device)
-        ranks_logits.masked_fill_(mask, -torch.inf)
+        ranks_logits.masked_fill_(mask, -1e4)
 
         # calculate loss
+        ranks_logprobs = F.log_softmax(ranks_logits, dim=1)
         _, T = ranks_logits.shape
         ranks_true = self._make_true_ranks(T, dia_lens, device)
-        loss = self.loss_fn(ranks_logits, ranks_true)
+        loss = self.loss_fn(ranks_logprobs, ranks_true)
 
         # calculate metric
         unbinded_ranks_logits = self._unbind_logits(ranks_logits, mask, dia_lens)
@@ -513,10 +514,11 @@ class BaseUtteranceSorter(nn.Module):
             return 1 / (1 + (2 * x) ** 5)
         
         for length in dia_lens:
-            ranks = torch.linspace(0, 1, length, device=device)
-            padded_ranks = F.pad(ranks, pad=(0, T-length), value=1)
-            shaped_ranks = sigmoid(padded_ranks)
-            res.append(shaped_ranks)
+            ranks = torch.linspace(1, 0, length, device=device)
+            ranks = F.pad(ranks, pad=(0, T-length), value=0)
+            # ranks = sigmoid(ranks)
+            ranks = ranks / ranks.sum()
+            res.append(ranks)
         
         return torch.stack(res)
 
