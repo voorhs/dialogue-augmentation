@@ -772,6 +772,8 @@ class Learner(pl.LightningModule):
         optim_hparams = self.optimizers().defaults
         model_hparams = self.model.get_hparams()
         model_hparams.update(optim_hparams)
+        model_hparams['batch size'] = BATCH_SIZE
+        model_hparams['warmup period'] = WARMUP_PERIOD
         self.logger.log_hyperparams(model_hparams)
 
     def configure_optimizers(self, config):
@@ -812,10 +814,13 @@ class Learner(pl.LightningModule):
             {"params": [param_dict[pn] for pn in sorted(list(no_decay))], "weight_decay": 0.0},
         ]
         optimizer = torch.optim.AdamW(optim_groups, lr=config['lr'], betas=config['betas'])
-        def lr_foo(step, warmup_steps=200):
-            step = step % warmup_steps
-            lr_scale = (step + 1) / warmup_steps
-            return lr_scale
+        def lr_foo(step, warmup_steps=WARMUP_PERIOD, periodic=DO_PERIODIC_WARMUP):
+            if warmup_steps is None:
+                return 1
+            if periodic:
+                return (step % warmup_steps + 1) / warmup_steps
+            else:
+                return (step + 1) / warmup_steps if step < warmup_steps else 1
 
         scheduler = LambdaLR(
             optimizer,
@@ -851,6 +856,8 @@ if __name__ == "__main__":
         )
         LR = 5e-4
         BATCH_SIZE = 64
+        WARMUP_PERIOD = None
+        DO_PERIODIC_WARMUP = False
     elif args.model == 'listwise':
         model = UtteranceSorter(
             config=TransformerConfig(
@@ -862,10 +869,12 @@ if __name__ == "__main__":
             ),
             encoder_name='sentence-transformers/all-mpnet-base-v2',
             dropout_prob=0.02,
-            finetune_encoder_layers=1
+            finetune_encoder_layers=3
         )
         LR = 3e-6
-        BATCH_SIZE = 512
+        BATCH_SIZE = 192
+        WARMUP_PERIOD = 200
+        DO_PERIODIC_WARMUP = False
     elif args.model == 'listwise2':
         # exit()
         model = UtteranceSorter2(
@@ -875,6 +884,8 @@ if __name__ == "__main__":
         )
         LR = 1e-5
         BATCH_SIZE = 32
+        WARMUP_PERIOD = 200
+        DO_PERIODIC_WARMUP = True
 
     learner = Learner(model)
     learner.configure_optimizers = partial(learner.configure_optimizers, config={'lr': LR, 'weight_decay': WEIGHT_DECAY, 'betas': BETAS})
@@ -913,7 +924,7 @@ if __name__ == "__main__":
     )
 
     trainer = pl.Trainer(
-        # max_epochs=1,
+        max_epochs=1,
         max_time={'hours': 24},
         
         # max_time={'minutes': 2},
