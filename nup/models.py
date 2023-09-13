@@ -1,21 +1,23 @@
 from torch.utils.data import Dataset
 import math
 import json
-from typing import List, Literal
+from typing import Literal, Tuple
 from transformers import AutoModel, AutoTokenizer
 import torch.nn as nn
 import torch
 import lightning.pytorch as pl
 import torch.nn.functional as F
 import numpy as np
-from dataclasses import dataclass, asdict
+from dataclasses import dataclass
 from bisect import bisect_left
 import os
-from collections import defaultdict
-from transformers.models.mpnet.modeling_mpnet import create_position_ids_from_input_ids
 from torch.optim.lr_scheduler import LambdaLR
+from aux import mySentenceTransformer, Projector
+from dialoguemodels import UtteranceTransformerDMConfig, UtteranceTransformerDM, SparseTransformerDM, HSSADM, HSSAConfig
 
-# os.chdir('nup')
+
+#### pairwise models ####
+
 
 class NUPDataset(Dataset):
     chunk_size = 2048
@@ -81,6 +83,213 @@ class NUPDataset(Dataset):
         return item
 
 
+class LightningCkptLoadable:
+    @staticmethod
+    def from_checkpoint(path_to_ckpt, model, map_location=None):
+        return Learner.load_from_checkpoint(
+            path_to_ckpt,
+            map_location=map_location,
+            model=model
+        ).model
+
+
+class ChainCosine(nn.Module, LightningCkptLoadable):
+    def __init__(self, target_encoder, context_encoder, projection_size, context_size, tau):
+        super().__init__()
+
+        self.projection_size = projection_size
+        self.context_size = context_size
+        self.tau = tau
+
+        self.target_encoder = target_encoder
+        self.context_encoder = context_encoder
+        
+        self.context_projector = Projector(
+            input_size=self.context_encoder.get_encoding_size(),
+            output_size=self.projection_size
+        )
+        self.target_projector = Projector(
+            input_size=self.target_encoder.get_encoding_size(),
+            output_size=self.projection_size
+        )
+
+    def get_hparams(self):
+        return {
+            "context_size": self.context_size,
+            "tau": self.tau
+        }
+
+    @property
+    def device(self):
+        return self.target_encoder.model.device
+    
+    def get_logits(self, batch):
+        if self.context_size is None:
+            context_slice = slice(None, None, None)
+        else:
+            context_slice = slice(-self.context_size, None, None)
+
+        context_batch = []
+        target_batch = []
+        for pair in batch:
+            context_batch.append(pair['context'][context_slice])
+            target_batch.append(pair['target'])
+        
+        target_encodings = self.target_encoder(target_batch)
+        context_encodings = self.context_encoder(context_batch)
+
+        context_encodings = self.context_projector(context_encodings)
+        target_encodings = self.target_projector(target_encodings)
+
+        return context_encodings @ target_encodings.T
+
+    def forward(self, batch):
+        logits = self.get_logits(batch)
+        labels = torch.arange(len(batch), device='cuda')
+        
+        loss = F.cross_entropy(logits, labels, reduction='mean')
+        accuracy = (torch.argmax(logits, dim=1) == labels).float().mean().item()
+
+        return loss, accuracy
+    
+    @torch.no_grad()
+    def score(self, dialogue):
+        batch = []
+        for i in range(1, len(dialogue)):
+            batch.append({
+                'context': dialogue[:i],
+                'target': dialogue[i]
+            })
+        logits = self.get_logits(batch)
+        return F.softmax(logits, dim=1).diag().log10().mean().cpu().item()
+
+
+class TargetEncoder(nn.Module):
+    def __init__(self, sentence_encoder: mySentenceTransformer, n_speakers=2, speaker_embedding_dim=8):
+        super().__init__()
+
+        self.sentence_encoder = sentence_encoder
+        self.n_speakers = n_speakers
+        self.speaker_embedding_dim = speaker_embedding_dim
+
+        self.speaker_embedding = nn.Embedding(n_speakers, speaker_embedding_dim)
+    
+    def forward(self, batch):
+        uts = [item['utterance'] for item in batch]
+        spe = [item['speaker'] for item in batch]
+        
+        sentence_embeddings = self.sentence_encoder(uts)
+        speaker_ids = torch.tensor(spe, device=self.device)
+        speaker_embeddings = self.speaker_embedding(speaker_ids)
+        return torch.cat([torch.stack(sentence_embeddings), speaker_embeddings], dim=1)
+
+    @property
+    def device(self):
+        return self.sentence_encoder.model.device
+    
+    def get_encoding_size(self):
+        return self.speaker_embedding_dim + self.sentence_encoder.get_sentence_embedding_size()
+
+
+class ContextEncoderConcat(nn.Module):
+    def __init__(self, sentence_encoder: mySentenceTransformer, context_size):
+        super().__init__()
+
+        self.sentence_encoder = sentence_encoder
+        self.context_size = context_size
+
+    def forward(self, batch):
+        uts = []
+        lens = []
+        for dia in batch:
+            cur_uts = [item['utterance'] for item in dia]
+            uts.extend(cur_uts)
+            lens.append(len(cur_uts))
+        
+        sentence_embeddings = self.sentence_encoder(uts)
+        d = self.get_encoding_size()
+        res = []
+        for i in range(len(batch)):
+            start = sum(lens[:i])
+            end = start + lens[i]
+            n_zeros_to_pad = (self.context_size - lens[i]) * d
+            enc = F.pad(torch.cat(sentence_embeddings[start:end]), pad=(n_zeros_to_pad, 0), value=0)
+            res.append(enc)
+        
+        return res
+
+    def get_encoding_size(self):
+        return self.sentence_encoder.get_sentence_embedding_size() * self.context_size
+
+
+class ContextEncoderEMA(nn.Module):
+    def __init__(self, sentence_encoder: mySentenceTransformer, context_size, tau):
+        super().__init__()
+
+        self.sentence_encoder = sentence_encoder
+        self.context_size = context_size
+        self.tau = tau
+    
+    def forward(self, batch):
+        uts = []
+        lens = []
+        for dia in batch:
+            cur_uts = [item['utterance'] for item in dia]
+            uts.extend(cur_uts)
+            lens.append(len(cur_uts))
+        
+        sentence_embeddings = self.sentence_encoder(uts)
+        return self._ema(sentence_embeddings, lens, self.tau)
+    
+    @staticmethod
+    def _ema(sentence_embeddings, lens, tau):
+        res = []
+        for i in range(len(lens)):
+            start = sum(lens[:i])
+            end = start + lens[i]
+            embs = sentence_embeddings[start:end]
+            
+            last_ut = embs[-1]
+
+            if lens[i] > 1:
+                prev_uts = embs[-2]
+            else:
+                prev_uts = torch.zeros_like(last_ut)
+            for prev_ut in embs[-3:-1:-1]:
+                prev_uts = tau * prev_uts + (1 - tau) * prev_ut
+            
+            res.append(torch.cat([prev_uts, last_ut]))
+        
+        return res
+
+    def get_encoding_size(self):
+        return 2 * self.sentence_encoder.get_sentence_embedding_size()
+
+
+class ContextEncoderSparseTransformer(nn.Module):
+    def __init__(self, hf_model_name, tau):
+        super().__init__()
+        self.tau = tau
+        self.dialogue_model = SparseTransformerDM(hf_model_name)
+    
+    def forward(self, batch):
+        hidden_states = self.dialogue_model(batch)
+        
+        lens = [len(context) for context in batch]
+        d = self.dialogue_model.model.config.hidden_size
+        
+        sentence_embeddings = [torch.split(hs, d, dim=0)[:length] for hs, length in zip(hidden_states, lens)]
+        encodings = ContextEncoderEMA._ema(sentence_embeddings, lens, self.tau)
+        
+        return encodings
+
+    def get_encoding_size(self):
+        return 2 * self.dialogue_model.model.config.hidden_size
+
+
+#### listwise models ####
+
+
 class DialogueDataset(Dataset):
     chunk_size = 512
     def __init__(self, path, split: Literal['train', 'test', 'val'], fraction=1.):
@@ -129,329 +338,6 @@ class DialogueDataset(Dataset):
         return item
 
 
-def collate_fn(batch):
-    return batch
-
-
-class mySentenceTransformer(nn.Module):
-    """Imitation of SentenceTransformers (https://www.sbert.net/)"""
-
-    def __init__(
-            self,
-            model_name='sentence-transformers/all-mpnet-base-v2',
-            pooling=True
-        ):
-        """If `pooling=False`, then instead of sentence embeddings forward will return list of token embeddings."""
-        super().__init__()
-        self.model_name = model_name
-        self.pooling = pooling
-
-        self.model = AutoModel.from_pretrained(model_name)
-        self.tokenizer = AutoTokenizer.from_pretrained(model_name)
-
-    def forward(self, sentences: List[str]) -> List[torch.Tensor]:
-        input = self.tokenizer(sentences, padding='longest', return_tensors='pt')
-        output = self.model(
-            input_ids=input['input_ids'].to(self.model.device),
-            attention_mask=input['attention_mask'].to(self.model.device)
-        )
-        
-        res = []
-        for token_emb, attention in zip(output.last_hidden_state, input['attention_mask']):
-            last_mask_id = len(attention)-1
-            while last_mask_id > 0 and attention[last_mask_id].item() == 0:
-                last_mask_id -= 1
-            embs = token_emb[:last_mask_id+1]
-            if self.pooling:
-                embs = torch.mean(embs, dim=0)
-                embs = embs / torch.linalg.norm(embs)
-            res.append(embs)
-
-        return res
-
-
-WEIGHT_DECAY = 1e-2
-BETAS = (0.9, 0.999)
-PROJECTION_SIZE = 512
-
-
-class Projector(nn.Module):
-    """Fully-Connected 2-layer Linear Model. Taken from linking prediction paper code."""
-
-    def __init__(self, input_size, output_size):
-        super().__init__()
-        self.linear_1 = nn.Linear(input_size, input_size)
-        self.linear_2 = nn.Linear(input_size, input_size)
-        self.norm1 = nn.LayerNorm(input_size)
-        self.norm2 = nn.LayerNorm(input_size)
-        self.final = nn.Linear(input_size, output_size)
-        # self.orthogonal_initialization()
-
-    def orthogonal_initialization(self):
-        for l in [self.linear_1, self.linear_2]:
-            torch.nn.init.orthogonal_(l.weight)
-
-    def forward(self, x):
-        if not isinstance(x, torch.Tensor):
-            x = torch.stack(x)
-        else:
-            x = x.to(torch.float32)
-        x = x.cuda()
-        x = x + F.gelu(self.linear_1(self.norm1(x)))
-        x = x + F.gelu(self.linear_2(self.norm2(x)))
-
-        return F.normalize(self.final(x), dim=1)
-
-
-class LightningCkptLoadable:
-    @staticmethod
-    def from_checkpoint(path_to_ckpt, model, map_location=None):
-        return Learner.load_from_checkpoint(
-            path_to_ckpt,
-            map_location=map_location,
-            model=model
-        ).model
-
-
-class ChainCosine(nn.Module, LightningCkptLoadable):
-    def __init__(self, encoder_name, projection_size, context_size, tau, finetune_encoder_layers: int = 0):
-        """
-        Params
-        ------
-        - `encoder_name`: name of underlying hf model for sentence embedding
-        - `projection_size`: final representation size
-        - `context_size`: number of recent utterances that are encoded into contextual representation, if None then use full context
-        - `tau`: EMA coefficient for context encoding
-        - `finetune_encoder_layers`: number of last layers of hf model to finetune
-        """
-        super().__init__()
-
-        self.projection_size = projection_size
-        self.tau = tau
-        
-        self.encoder = mySentenceTransformer(encoder_name, pooling=True)
-        freeze_hf_model(self.encoder.model, finetune_encoder_layers)
-
-        self.sentence_embedding_dimension = self.encoder.model.config.hidden_size
-        self.context_size = context_size
-        self.context_projector = Projector(
-            input_size=self.sentence_embedding_dimension*2+1,
-            output_size=self.projection_size
-        )
-        self.target_projector = Projector(
-            input_size=self.sentence_embedding_dimension+1,
-            output_size=self.projection_size
-        )
-    
-    def get_hparams(self):
-        return {
-            "projection_size": self.projection_size,
-            "tau": self.tau,
-            "sentence_embedding_dimension": self.sentence_embedding_dimension,
-            "context_size": self.context_size
-        }
-
-    def get_logits(self, batch):
-        # collate utterances to list and get sentence encodings
-        utterances = []
-        rle = []
-        context_speaker = []
-        target_speaker = []
-        if self.context_size is None:
-            context_slice = slice(None, None, -1)
-        else:
-            context_slice = slice(-1, -self.context_size-1, -1)
-        for item in batch:
-            cur_utterances = [item['target']['utterance']] + [ut['utterance'] for ut in item['context'][context_slice]]
-            utterances.extend(cur_utterances)
-            rle.append(len(cur_utterances))
-            context_speaker.append(item['context'][-1]['speaker'])
-            target_speaker.append(item['target']['speaker'])
-        
-        encodings = self.encoder(utterances)
-
-        # collate context and target encodings
-        context_batch = []
-        target_batch = []
-        for i, length in enumerate(rle):
-            start = sum(rle[:i])
-            end = start + length
-
-            if length == 2:
-                context_encoding = torch.zeros_like(encodings[0])
-            else:   # length > 2
-                context_encoding = encodings[start+2]
-            
-            for enc in encodings[start+3:end]:
-                context_encoding = (1 - self.tau) * context_encoding + enc * self.tau
-            
-            context_encoding = torch.concat([encodings[start+1], context_encoding, context_encoding.new_tensor([context_speaker[i]])])
-            target_encoding = torch.concat([encodings[start], context_encoding.new_tensor([target_speaker[i]])])
-            
-            context_batch.append(context_encoding)
-            target_batch.append(target_encoding)
-        
-        # project to joing embedding space
-        context_batch = self.context_projector(
-            torch.stack(context_batch) 
-        )
-        target_batch = self.target_projector(
-            torch.stack(target_batch)
-        )
-
-        return context_batch @ target_batch.T
-
-    def forward(self, batch):
-        logits = self.get_logits(batch)
-        labels = torch.arange(len(batch), device='cuda')
-        
-        loss = F.cross_entropy(logits, labels, reduction='mean')
-        accuracy = (torch.argmax(logits, dim=1) == labels).float().mean().item()
-
-        return loss, accuracy
-    
-    @torch.no_grad()
-    def score(self, dialogue):
-        batch = []
-        for i in range(1, len(dialogue)):
-            batch.append({
-                'context': dialogue[:i],
-                'target': dialogue[i]
-            })
-        B = len(batch)
-        logits = self.get_logits(batch)
-        return F.softmax(logits, dim=1).diag().log10().mean().cpu().item()
-
-    @staticmethod
-    def from_checkpoint(path_to_ckpt, map_location=None, **kwargs):
-        return Learner.load_from_checkpoint(
-            path_to_ckpt,
-            map_location=map_location,
-            model=ChainCosine(**kwargs)
-        ).model
-
-
-def freeze_hf_model(hf_model, finetune_encoder_layers: int):
-        """Freeze all encoder layers except last `finetune_encoder_layers`"""
-        hf_model.requires_grad_(False)
-        n_layers = hf_model.config.num_hidden_layers
-        for i in range(n_layers):
-            hf_model.encoder.layer[i].requires_grad_(i>=n_layers-finetune_encoder_layers)
-
-
-@dataclass
-class TransformerConfig:
-    hidden_size: int
-    num_attention_heads: int
-    attention_probs_dropout_prob: float
-    intermediate_size: int
-    n_layers: int
-
-
-class SelfAttention(nn.Module):
-    def __init__(
-            self,
-            config: TransformerConfig
-        ):
-        super().__init__()
-        
-        if config.hidden_size % config.num_attention_heads != 0:
-            raise ValueError(
-                f"The hidden size ({config.hidden_size}) is not a multiple of the number of attention "
-                f"heads ({config.num_attention_heads})"
-            )
-        
-        self.config = config
-
-        self.attention_head_size = config.hidden_size // config.num_attention_heads
-
-        self.norm = nn.LayerNorm(config.hidden_size)
-        self.q = nn.Linear(config.hidden_size, config.hidden_size)
-        self.k = nn.Linear(config.hidden_size, config.hidden_size)
-        self.v = nn.Linear(config.hidden_size, config.hidden_size)
-        self.o = nn.Linear(config.hidden_size, config.hidden_size)
-
-        self.dropout = nn.Dropout(config.attention_probs_dropout_prob)
-
-    def transpose_for_scores(self, x):
-        """
-        change view from (B, T, H) to (B, n, T, h)
-        - B batch size
-        - T longest sequence size
-        - H hidden size
-        - n number of att heads
-        - h single att head size
-        """
-        new_x_shape = x.size()[:-1] + (self.config.num_attention_heads, self.attention_head_size)
-        x = x.view(*new_x_shape)
-        return x.permute(0, 2, 1, 3)
-
-    def forward(self, x, attention_mask):
-        """
-        x: (B, T, H)
-        attention_mask: (B, T), BoolTensor, if True, then ignore corresponding token
-        """
-        # (B, T, H)
-        hidden_states = self.norm(x)
-
-        # (B, T, H)
-        q = self.q(hidden_states)
-        k = self.k(hidden_states)
-        v = self.v(hidden_states)
-
-        # (B, n, T, h)
-        q = self.transpose_for_scores(q)
-        k = self.transpose_for_scores(k)
-        v = self.transpose_for_scores(v)
-
-        # (B, n, T, T)
-        attention_scores = torch.matmul(q, k.transpose(-1, -2))
-        attention_scores = attention_scores / np.sqrt(self.attention_head_size)
-        attention_scores = attention_scores.masked_fill(attention_mask[:, None, None, :], -torch.inf)
-
-        # (B, n, T, T)
-        attention_probs = nn.functional.softmax(attention_scores, dim=-1)
-        attention_probs = self.dropout(attention_probs)
-
-        # (B, n, T, h)
-        c = torch.matmul(attention_probs, v)
-
-        # (B, T, H)
-        c = c.permute(0, 2, 1, 3).contiguous()
-        new_c_shape = c.size()[:-2] + (self.config.hidden_size,)
-        c = c.view(*new_c_shape)
-
-        # (B, T, H)
-        return x + self.o(c)
-
-
-class FFBlock(nn.Module):
-    def __init__(self, config: TransformerConfig):
-        super().__init__()
-        
-        self.norm = nn.LayerNorm(config.hidden_size)
-        self.linear1 = nn.Linear(config.hidden_size, config.intermediate_size)
-        self.nonlinear = nn.GELU()
-        self.linear2 = nn.Linear(config.intermediate_size, config.hidden_size)
-    
-    def forward(self, x):
-        return x + self.linear2(self.nonlinear(self.linear1(self.norm(x))))
-
-
-class TransformerBlock(nn.Module):
-    def __init__(self, config: TransformerConfig):
-        super().__init__()
-        
-        self.att = SelfAttention(config)
-        self.ff = FFBlock(config)
-        self.norm = nn.LayerNorm(config.hidden_size)
-
-    def forward(self, x, attention_mask):
-        x = self.att(x, attention_mask)
-        x = self.ff(x)
-        return self.norm(x)
-
-
 class RankerHead(nn.Module):
     def __init__(self, hidden_size, dropout_prob):
         super().__init__()
@@ -465,22 +351,30 @@ class RankerHead(nn.Module):
         return x.squeeze(-1)
 
 
-class BaseUtteranceSorter(nn.Module):
-    def __init__(self):
+class UtteranceSorter(nn.Module):
+    def __init__(self, dialogue_model, dropout_prob):
         super().__init__()
-        # self.loss_fn = nn.CrossEntropyLoss(reduction='mean')
+
+        self.dialogue_model = dialogue_model
+        self.dropout_prob = dropout_prob
+        
+        self.ranker_head = RankerHead(dialogue_model.get_hidden_size())
         self.loss_fn = nn.KLDivLoss(reduction='batchmean')
 
-    def augment(self, batch):
-        device = self.device
-        dia_lens = [len(dia) for dia in batch]
+    def get_hparams(self):
+        res = {
+            "head_dropout_prob": self.dropout_prob,
+        }
+        res.update(self.dialogue_model.get_hparams())
+        return res
 
-        ranks_logits = self.get_logits(batch)
-        mask = self._make_attention_mask(dia_lens, device)
-        unbinded_ranks_logits = self._unbind_logits(ranks_logits, mask, dia_lens)
-        permutations = self._to_permutations(unbinded_ranks_logits)
+    @property
+    def device(self):
+        return self.dialogue_model.device
 
-        return [[dia[i] for i in perm] for dia, perm in zip(batch, permutations)]
+    def get_logits(self, batch):
+        hidden_states = self.dialogue_model(batch)
+        return self.ranker_head(hidden_states)
 
     def forward(self, batch):
         device = self.device
@@ -489,7 +383,7 @@ class BaseUtteranceSorter(nn.Module):
         ranks_logits = self.get_logits(batch)
 
         # zero attention to padding token-utterances
-        mask = self._make_attention_mask(dia_lens, device)
+        mask = self._make_mask(dia_lens, device)
         ranks_logits.masked_fill_(mask, -1e4)
 
         # calculate loss
@@ -504,6 +398,18 @@ class BaseUtteranceSorter(nn.Module):
         sorting_index = 1-np.mean([self._normalized_inversions_count(perm) for perm in permutations])
 
         return loss, sorting_index
+
+    @torch.no_grad()
+    def augment(self, batch):
+        device = self.device
+        dia_lens = [len(dia) for dia in batch]
+
+        ranks_logits = self.get_logits(batch)
+        mask = self._make_mask(dia_lens, device)
+        unbinded_ranks_logits = self._unbind_logits(ranks_logits, mask, dia_lens)
+        permutations = self._to_permutations(unbinded_ranks_logits)
+
+        return [[dia[i] for i in perm] for dia, perm in zip(batch, permutations)]
 
     @staticmethod
     def _make_true_ranks(T, dia_lens, device):
@@ -528,8 +434,8 @@ class BaseUtteranceSorter(nn.Module):
         return [logits.argsort(descending=True) for logits in unbinded_ranks_logits]
 
     @staticmethod
-    def _make_attention_mask(dia_lens, device):
-        """this mask indicates padding tokens(utterances)"""
+    def _make_mask(dia_lens, device):
+        """this mask indicates padding tokens(utterances). used for ranking (not for transformer)"""
         T = max(dia_lens)
         dia_lens_expanded = torch.tensor(dia_lens, device=device)[:, None]
         max_dia_len_expanded = torch.arange(T, device=device)[None, :]
@@ -554,173 +460,21 @@ class BaseUtteranceSorter(nn.Module):
         return ans / max_inversions
 
 
-class UtteranceSorter(BaseUtteranceSorter, nn.Module, LightningCkptLoadable):
-    def __init__(self, config: TransformerConfig, encoder_name, dropout_prob, finetune_encoder_layers: int = 0):
-        super().__init__()
-
-        self.encoder_name = encoder_name
-        self.dropout_prob = dropout_prob
-        self.finetune_encoder_layers = finetune_encoder_layers
-
-        self.encoder = mySentenceTransformer(encoder_name)
-        self.encoder.requires_grad_(False)
-        freeze_hf_model(self.encoder.model, finetune_encoder_layers)
-
-        sentence_embedding_dimension = self.encoder.model.config.hidden_size
-        self.hidden_size = sentence_embedding_dimension // 2
-
-        self.speaker_embeddings = nn.Embedding(2, 8)
-        
-        self.projector = Projector(sentence_embedding_dimension, self.hidden_size - 8)
-        config.hidden_size = self.hidden_size
-        config.intermediate_size = 4 * self.hidden_size
-        self.transformer = nn.ModuleList([TransformerBlock(config) for _ in range(config.n_layers)])
-        self.ranker_head = RankerHead(self.hidden_size, dropout_prob)
-
-        self.config = config
-
-    def get_hparams(self):
-        res = {
-            "encoder_name": self.encoder_name,
-            "head_dropout_prob": self.dropout_prob,
-            "finetune_encoder_layers": self.finetune_encoder_layers,
-            "hidden_size": self.hidden_size
-        }
-        res.update(asdict(self.config))
-        return res
-
-    @property
-    def device(self):
-        return self.encoder.model.device
-
-    def get_logits(self, batch):
-        device = self.device
-        dia_lens = [len(dia) for dia in batch]
-
-        inputs = []
-        for dia in batch:
-            speaker_ids = torch.tensor([item['speaker'] for item in dia], device=device, dtype=torch.long)
-            speaker_embeddings = self.speaker_embeddings(speaker_ids)
-
-            sentence_embeddings = self.encoder([item['utterance'] for item in dia])
-            sentence_embeddings = self.projector(sentence_embeddings)
-            
-            utterance_embeddings = torch.cat([sentence_embeddings, speaker_embeddings], dim=1)
-            utterance_embeddings = torch.unbind(utterance_embeddings)
-            inputs.append(utterance_embeddings)
-        
-        T = max(dia_lens)
-        attention_mask = torch.BoolTensor([length * [False] + (T-length) * [True] for length in dia_lens]).to(device)
-        padded_inputs = torch.stack([torch.stack(inp + (T-len(inp)) * (inp[0].new_zeros(self.hidden_size),)) for inp in inputs])
-
-        # (B, T, H)
-        hidden_states = padded_inputs
-        for layer in self.transformer:
-            hidden_states = layer(hidden_states, attention_mask)
-
-        # (B, T)
-        return self.ranker_head(hidden_states)
-
-
-class UtteranceSorter2(BaseUtteranceSorter, nn.Module, LightningCkptLoadable):
-    def __init__(self, hf_model_name, dropout_prob, finetune_encoder_layers: int = 1):
-        super().__init__()
-
-        self.hf_model_name = hf_model_name
-        self.dropout_prob = dropout_prob
-        self.finetune_encoder_layers = finetune_encoder_layers
-
-        self.model = AutoModel.from_pretrained(hf_model_name)
-        self.tokenizer = AutoTokenizer.from_pretrained(hf_model_name)    
-        freeze_hf_model(self.model, finetune_encoder_layers)
-
-        self.ranker_head = RankerHead(self.model.config.hidden_size, dropout_prob)
-    
-    def get_hparams(self):
-        return {
-            "hf_model_name": self.hf_model_name,
-            "head_dropout_prob": self.dropout_prob,
-            "finetune_encoder_layers": self.finetune_encoder_layers,
-        }
-
-    @property
-    def device(self):
-        return self.model.device
-    
-    def _tokenize(self, batch, device, padding_idx=1):  # padding_idx that is used in MPNet
-        # group utterances by turns in order to tokenize and pad them jointly
-        uts_grouped_by_turn = defaultdict(list)
-        max_n_utterances = max(len(dia) for dia in batch)
-
-        for dia in batch:
-            for i, item in enumerate(dia):
-                uts_grouped_by_turn[i].append(f"[{item['speaker']}] {item['utterance']}")
-            for i in range(len(dia), max_n_utterances):
-                uts_grouped_by_turn[i].append('')
-
-        uts_grouped_by_turn_tokenized = [None for _ in range(max_n_utterances)]
-        uts_lens = [None for _ in range(max_n_utterances)]
-        for i, uts in uts_grouped_by_turn.items():
-            tokens = self.tokenizer(uts, padding='longest', return_tensors='pt')
-            uts_grouped_by_turn_tokenized[i] = tokens
-            uts_lens[i] = tokens['input_ids'].shape[1]
-        
-        input_ids = torch.cat([group['input_ids'] for group in uts_grouped_by_turn_tokenized], dim=1)
-
-        # make extended attention mask of size (B, T, T)
-        attention_mask = []
-        for i in range(len(batch)):
-            masks_per_utterance = []
-            for j, group in enumerate(uts_grouped_by_turn_tokenized):
-                mask = group['attention_mask'][i]
-                T = uts_lens[j]
-                masks_per_utterance.append(mask[None, :].expand(T, T))
-            attention_mask.append(torch.block_diag(*masks_per_utterance))
-        attention_mask = torch.stack(attention_mask, dim=0)
-        
-        # allow CLS tokens attend to each other
-        extended_attention_mask = attention_mask
-        for i in range(len(uts_lens)):
-            cls_idx = sum(uts_lens[:i])
-            extended_attention_mask[:, :, cls_idx] = 1
-        
-        # assign positions within each utterance
-        position_ids = []
-        for group in uts_grouped_by_turn_tokenized:
-            ids = create_position_ids_from_input_ids(group['input_ids'], padding_idx=padding_idx)
-            position_ids.append(ids)
-        position_ids = torch.cat(position_ids, dim=1)
-        
-        inputs = {
-            "input_ids": input_ids.to(device),
-            "attention_mask": extended_attention_mask.to(device),
-            "position_ids": position_ids.to(device)
-        }
-        
-        return inputs, uts_lens
-    
-    def get_logits(self, batch):
-        device = self.device
-
-        inputs, uts_lens = self._tokenize(batch, device)
-        outputs = self.model(**inputs)
-
-        hidden_states = []
-        for i in range(len(uts_lens)):
-            j = sum(uts_lens[:i])
-            hidden_states.append(outputs.last_hidden_state[:, j, :])
-        
-        # (B, T, H)
-        hidden_states = torch.stack(hidden_states, dim=1)
-
-        # (B, T)
-        return self.ranker_head(hidden_states)
+@dataclass
+class LearnerConfig:
+    lr: float = None
+    batch_size: int = None
+    warmup_period: int = None
+    do_periodic_warmup: bool = False
+    weight_decay: float = 1e-2
+    betas: Tuple[float, float] = (0.9, 0.999)
 
 
 class Learner(pl.LightningModule):
-    def __init__(self, model):
+    def __init__(self, model, config: LearnerConfig):
         super().__init__()
         self.model = model
+        self.config = config
 
     def forward(self, batch):
         return self.model(batch)
@@ -734,7 +488,7 @@ class Learner(pl.LightningModule):
             logger=True,
             on_step=True,
             on_epoch=True,
-            batch_size=BATCH_SIZE
+            batch_size=self.config.batch_size
         )
         self.log(
             name='train_metric',
@@ -743,7 +497,7 @@ class Learner(pl.LightningModule):
             logger=True,
             on_step=True,
             on_epoch=True,
-            batch_size=BATCH_SIZE
+            batch_size=self.config.batch_size
         )
         return loss
     
@@ -756,7 +510,7 @@ class Learner(pl.LightningModule):
             logger=True,
             on_step=False,
             on_epoch=True,
-            batch_size=BATCH_SIZE
+            batch_size=self.config.batch_size
         )
         self.log(
             name='val_metric',
@@ -765,18 +519,19 @@ class Learner(pl.LightningModule):
             logger=True,
             on_step=False,
             on_epoch=True,
-            batch_size=BATCH_SIZE
+            batch_size=self.config.batch_size
         )
     
     def on_train_start(self):
         optim_hparams = self.optimizers().defaults
         model_hparams = self.model.get_hparams()
         model_hparams.update(optim_hparams)
-        model_hparams['batch size'] = BATCH_SIZE
-        model_hparams['warmup period'] = WARMUP_PERIOD
+        model_hparams['batch size'] = self.config.batch_size
+        model_hparams['warmup period'] = self.config.warmup_period
+        model_hparams['do period warmup'] = self.config.do_periodic_warmup
         self.logger.log_hyperparams(model_hparams)
 
-    def configure_optimizers(self, config):
+    def configure_optimizers(self):
         """Taken from https://github.com/karpathy/minGPT/blob/3ed14b2cec0dfdad3f4b2831f2b4a86d11aef150/mingpt/model.py#L136"""
         # separate out all parameters to those that will and won't experience regularizing weight decay
         decay = set()
@@ -810,11 +565,14 @@ class Learner(pl.LightningModule):
 
         # create the pytorch optimizer object
         optim_groups = [
-            {"params": [param_dict[pn] for pn in sorted(list(decay))], "weight_decay": config['weight_decay']},
+            {"params": [param_dict[pn] for pn in sorted(list(decay))], "weight_decay": self.config.weight_decay},
             {"params": [param_dict[pn] for pn in sorted(list(no_decay))], "weight_decay": 0.0},
         ]
-        optimizer = torch.optim.AdamW(optim_groups, lr=config['lr'], betas=config['betas'])
-        def lr_foo(step, warmup_steps=WARMUP_PERIOD, periodic=DO_PERIODIC_WARMUP):
+        optimizer = torch.optim.AdamW(optim_groups, lr=self.config.lr, betas=self.config.betas)
+        def lr_foo(step):
+            warmup_steps = self.config.warmup_period
+            periodic = self.config.do_periodic_warmup
+            
             if warmup_steps is None:
                 return 1
             if periodic:
@@ -832,69 +590,189 @@ class Learner(pl.LightningModule):
 if __name__ == "__main__":
     from torch.utils.data import DataLoader
     from lightning.pytorch.callbacks import ModelCheckpoint, LearningRateMonitor
+
     from datetime import datetime
     torch.set_float32_matmul_precision('medium')
     import os
-    from functools import partial
 
     os.environ['TOKENIZERS_PARALLELISM'] = 'false'
     os.environ['CUDA_VISIBLE_DEVICES'] = '0'
 
+    from hssa.modeling_hssa import SegmentPooler
+    def freeze_hssa(model: nn.Module, finetune_layers=0):
+        model.embeddings.requires_grad_(False)
+        model.embeddings.word_embeddings.weight[-2:].requires_grad_(True)
+
+        model.encoder.requires_grad_(False)
+        for i, layer in enumerate(model.encoder.layer):
+            layer.requires_grad_(i>=model.config.num_hidden_layers-finetune_layers)
+
+        for module in model.modules():
+            if isinstance(module, SegmentPooler):
+                module.requires_grad_(True)
+
+    def freeze_hf_model(hf_model, finetune_layers):
+        """Freeze all encoder layers except last `finetune_encoder_layers`"""
+        hf_model.requires_grad_(False)
+        n_layers = hf_model.config.num_hidden_layers
+        for i in range(n_layers):
+            hf_model.encoder.layer[i].requires_grad_(i>=n_layers-finetune_layers)
+
+
     import argparse
     ap = argparse.ArgumentParser()
-    ap.add_argument('--model', dest='model', required=True, choices=['pairwise', 'listwise', 'listwise2'])
+    ap.add_argument('--model', dest='model', required=True, choices=[
+        'pairwise-cat', 'pairwise-ema', 'pairwise-sparse-transformer',
+        'listwise-utterance-transformer', 'listwise-sparse-transormer',
+        'listwise-hssa'
+    ])
     ap.add_argument('--name', dest='name', required=True)
     args = ap.parse_args()
 
-    if args.model == 'pairwise':
+    mpnet_name = 'sentence-transformers/all-mpnet-base-v2'
+
+    if args.model == 'pairwise-cat':
+        context_size = 6
+        finetune_encoder_layers = 2
+
+        encoder = mySentenceTransformer(mpnet_name)
+        freeze_hf_model(encoder, finetune_encoder_layers)
+        context_encoder = ContextEncoderConcat(encoder, context_size=context_size)
         model = ChainCosine(
-            encoder_name='sentence-transformers/all-mpnet-base-v2',
-            projection_size=PROJECTION_SIZE,
-            context_size=6,
-            tau=0.5,
-            finetune_encoder_layers=1
+            target_encoder=encoder,
+            context_encoder=context_encoder,
+            projection_size=512,
+            context_size=context_size
         )
-        LR = 5e-4
-        BATCH_SIZE = 64
-        WARMUP_PERIOD = None
-        DO_PERIODIC_WARMUP = False
-    elif args.model == 'listwise':
+        learner_config = LearnerConfig(
+            batch_size=128,
+            # warmup_period=None,
+            # do_periodic_warmup=None,
+            lr=3e-6,
+            context_size=context_size,
+            finetune_encoder_layers=finetune_encoder_layers
+        )
+    elif args.model == 'pairwise-ema':
+        context_size = 6
+        finetune_encoder_layers = 2
+        tau = 0.5
+
+        encoder = mySentenceTransformer(mpnet_name)
+        freeze_hf_model(encoder, finetune_encoder_layers)
+        context_encoder = ContextEncoderEMA(encoder, context_size=context_size, tau=tau)
+        model = ChainCosine(
+            target_encoder=encoder,
+            context_encoder=context_encoder,
+            projection_size=512,
+            context_size=context_size
+        )
+        learner_config = LearnerConfig(
+            batch_size=128,
+            # warmup_period=None,
+            # do_periodic_warmup=None,
+            lr=3e-6,
+            context_size=context_size,
+            finetune_encoder_layers=finetune_encoder_layers,
+            tau=tau
+        )
+    elif args.model == 'pairwise-sparse-transformer':
+        context_size = 6
+        finetune_encoder_layers = 2
+        tau = 0.5
+
+        encoder = mySentenceTransformer(mpnet_name)
+        freeze_hf_model(encoder, finetune_encoder_layers)
+        context_encoder = ContextEncoderSparseTransformer(mpnet_name, tau=tau)
+        model = ChainCosine(
+            target_encoder=encoder,
+            context_encoder=context_encoder,
+            projection_size=512,
+            context_size=context_size
+        )
+        learner_config = LearnerConfig(
+            batch_size=128,
+            warmup_period=200,
+            do_periodic_warmup=True,
+            lr=3e-6,
+            context_size=context_size,
+            finetune_encoder_layers=finetune_encoder_layers,
+            tau=tau
+        )
+    elif args.model == 'listwise-utterance-transformer':
+        ranker_head_dropout_prob = 0.02
+        config = UtteranceTransformerDMConfig(
+            num_attention_heads=4,
+            attention_probs_dropout_prob=0.02,
+            n_layers=4,
+            encoder_name='sentence-transformers/all-mpnet-base-v2',
+            embed_turn_ids=False,
+            is_casual=False
+        )
+        dialogue_model = UtteranceTransformerDM(config)
+        
         model = UtteranceSorter(
-            config=TransformerConfig(
-                hidden_size=None,
-                num_attention_heads=4,
-                attention_probs_dropout_prob=0.02,
-                intermediate_size=None,
-                n_layers=4
-            ),
-            encoder_name='sentence-transformers/all-mpnet-base-v2',
-            dropout_prob=0.02,
-            finetune_encoder_layers=3
+            dialogue_model=dialogue_model,
+            dropout_prob=ranker_head_dropout_prob
         )
-        LR = 3e-6
-        BATCH_SIZE = 192
-        WARMUP_PERIOD = 200
-        DO_PERIODIC_WARMUP = False
-    elif args.model == 'listwise2':
-        # exit()
-        model = UtteranceSorter2(
-            hf_model_name='sentence-transformers/all-mpnet-base-v2',
-            dropout_prob=0.,
-            finetune_encoder_layers=1
+        learner_config = LearnerConfig(
+            batch_size=192,
+            warmup_period=200,
+            do_periodic_warmup=False,
+            lr=3e-6,
+            dropout_prob=ranker_head_dropout_prob
         )
-        LR = 1e-5
-        BATCH_SIZE = 32
-        WARMUP_PERIOD = 200
-        DO_PERIODIC_WARMUP = True
+    elif args.model == 'listwise-sparse-transormer':
+        ranker_head_dropout_prob = 0.02
+        finetune_layers = 2
+        dialogue_model = SparseTransformerDM(mpnet_name)
+        freeze_hf_model(dialogue_model.model, finetune_layers)
+        
+        model = UtteranceSorter(
+            dialogue_model=dialogue_model,
+            dropout_prob=ranker_head_dropout_prob
+        )
+        learner_config = LearnerConfig(
+            batch_size=32,
+            warmup_period=200,
+            do_periodic_warmup=False,
+            lr=1e-5,
+            dropout_prob=ranker_head_dropout_prob
+        )
+    elif args.model == 'listwise-hssa':
+        ranker_head_dropout_prob = 0.02
+        finetune_layers = 2
+        config = HSSAConfig(
+            max_turn_embeddings=20,
+            casual_utterance_attention=False,
+            pool_utterances=True
+        )
+        dialogue_model = HSSADM(mpnet_name, config)
+        freeze_hssa(dialogue_model.model, 2)
+        model = UtteranceSorter(
+            dialogue_model=dialogue_model,
+            dropout_prob=ranker_head_dropout_prob
+        )
+        learner_config = LearnerConfig(
+            batch_size=64,
+            warmup_period=200,
+            do_periodic_warmup=True,
+            lr=3e-6,
+            dropout_prob=ranker_head_dropout_prob
+        )
 
-    learner = Learner(model)
-    learner.configure_optimizers = partial(learner.configure_optimizers, config={'lr': LR, 'weight_decay': WEIGHT_DECAY, 'betas': BETAS})
+    # learner = Learner.load_from_checkpoint(
+    #     # checkpoint_path='/home/alekseev_ilya/dialogue-augmentation/nup/logs/training/pairwise/checkpoints/last.ckpt',
+    #     model=model
+    # )
+    learner = Learner(model, learner_config)
 
-    dataset = NUPDataset if args.model == 'pairwise' else DialogueDataset
+    dataset = NUPDataset if args.model.startswith('pairwise') else DialogueDataset
+    def collate_fn(batch):
+        return batch
 
     train_loader = DataLoader(
         dataset=dataset('.', 'train', fraction=1.),
-        batch_size=BATCH_SIZE,
+        batch_size=learner_config.batch_size,
         shuffle=False,
         num_workers=3,
         collate_fn=collate_fn
@@ -902,7 +780,7 @@ if __name__ == "__main__":
 
     val_loader = DataLoader(
         dataset=dataset('.', 'val', fraction=.5),
-        batch_size=BATCH_SIZE,
+        batch_size=learner_config.batch_size,
         shuffle=False,
         num_workers=3,
         collate_fn=collate_fn
@@ -924,10 +802,10 @@ if __name__ == "__main__":
     )
 
     trainer = pl.Trainer(
-        max_epochs=1,
-        max_time={'hours': 24},
+        # max_epochs=1,
+        # max_time={'hours': 24},
         
-        # max_time={'minutes': 2},
+        max_time={'minutes': 5},
         # max_steps=30,
 
         # hardware settings
@@ -936,7 +814,7 @@ if __name__ == "__main__":
         precision="16-mixed",
 
         # logging and checkpointing
-        val_check_interval=400,
+        # val_check_interval=500,
         # check_val_every_n_epoch=1,
         logger=logger,
         enable_progress_bar=False,
@@ -945,11 +823,11 @@ if __name__ == "__main__":
         # log_every_n_steps=1,
 
         # check if model is implemented correctly
-        overfit_batches=False,
+        overfit_batches=2,
 
         # check training_step and validation_step doesn't fail
-        fast_dev_run=False,
-        num_sanity_val_steps=False
+        fast_dev_run=2,
+        num_sanity_val_steps=2
     )
 
     print('Started at', datetime.now().strftime("%H:%M:%S %d-%m-%Y"))
@@ -957,7 +835,7 @@ if __name__ == "__main__":
     # do magic!
     trainer.fit(
         learner, train_loader, val_loader,
-        # ckpt_path='logs/training/listwise-sigmoid/checkpoints/last.ckpt'
+        # ckpt_path=
     )
 
     print('Finished at', datetime.now().strftime("%H:%M:%S %d-%m-%Y"))
