@@ -2,13 +2,12 @@ from torch.utils.data import Dataset
 import math
 import json
 from typing import Literal, Tuple
-from transformers import AutoModel, AutoTokenizer
 import torch.nn as nn
 import torch
 import lightning.pytorch as pl
 import torch.nn.functional as F
 import numpy as np
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from bisect import bisect_left
 import os
 from torch.optim.lr_scheduler import LambdaLR
@@ -94,12 +93,11 @@ class LightningCkptLoadable:
 
 
 class ChainCosine(nn.Module, LightningCkptLoadable):
-    def __init__(self, target_encoder, context_encoder, projection_size, context_size, tau):
+    def __init__(self, target_encoder, context_encoder, projection_size, context_size):
         super().__init__()
 
         self.projection_size = projection_size
         self.context_size = context_size
-        self.tau = tau
 
         self.target_encoder = target_encoder
         self.context_encoder = context_encoder
@@ -116,7 +114,6 @@ class ChainCosine(nn.Module, LightningCkptLoadable):
     def get_hparams(self):
         return {
             "context_size": self.context_size,
-            "tau": self.tau
         }
 
     @property
@@ -207,7 +204,7 @@ class ContextEncoderConcat(nn.Module):
             lens.append(len(cur_uts))
         
         sentence_embeddings = self.sentence_encoder(uts)
-        d = self.get_encoding_size()
+        d = self.sentence_encoder.get_sentence_embedding_size()
         res = []
         for i in range(len(batch)):
             start = sum(lens[:i])
@@ -255,7 +252,7 @@ class ContextEncoderEMA(nn.Module):
                 prev_uts = embs[-2]
             else:
                 prev_uts = torch.zeros_like(last_ut)
-            for prev_ut in embs[-3:-1:-1]:
+            for prev_ut in embs[-3:-lens[i]-1:-1]:
                 prev_uts = tau * prev_uts + (1 - tau) * prev_ut
             
             res.append(torch.cat([prev_uts, last_ut]))
@@ -278,7 +275,9 @@ class ContextEncoderSparseTransformer(nn.Module):
         lens = [len(context) for context in batch]
         d = self.dialogue_model.model.config.hidden_size
         
-        sentence_embeddings = [torch.split(hs, d, dim=0)[:length] for hs, length in zip(hidden_states, lens)]
+        sentence_embeddings = []
+        for hs, length in zip(hidden_states, lens):
+            sentence_embeddings.extend(torch.unbind(hs, dim=0)[:length])
         encodings = ContextEncoderEMA._ema(sentence_embeddings, lens, self.tau)
         
         return encodings
@@ -358,7 +357,7 @@ class UtteranceSorter(nn.Module):
         self.dialogue_model = dialogue_model
         self.dropout_prob = dropout_prob
         
-        self.ranker_head = RankerHead(dialogue_model.get_hidden_size())
+        self.ranker_head = RankerHead(dialogue_model.get_hidden_size(), dropout_prob)
         self.loss_fn = nn.KLDivLoss(reduction='batchmean')
 
     def get_hparams(self):
@@ -462,6 +461,7 @@ class UtteranceSorter(nn.Module):
 
 @dataclass
 class LearnerConfig:
+    kwargs: field(default_factory=dict)
     lr: float = None
     batch_size: int = None
     warmup_period: int = None
@@ -528,7 +528,8 @@ class Learner(pl.LightningModule):
         model_hparams.update(optim_hparams)
         model_hparams['batch size'] = self.config.batch_size
         model_hparams['warmup period'] = self.config.warmup_period
-        model_hparams['do period warmup'] = self.config.do_periodic_warmup
+        model_hparams['do periodic warmup'] = self.config.do_periodic_warmup
+        model_hparams.update(self.config.kwargs)
         self.logger.log_hyperparams(model_hparams)
 
     def configure_optimizers(self):
@@ -537,20 +538,14 @@ class Learner(pl.LightningModule):
         decay = set()
         no_decay = set()
         whitelist_weight_modules = (torch.nn.Linear, )
-        blacklist_weight_modules = (torch.nn.LayerNorm, torch.nn.Embedding)
-        for mn, m in self.named_modules():
-            for pn, p in m.named_parameters():
-                fpn = '%s.%s' % (mn, pn) if mn else pn # full param name
+        # blacklist_weight_modules = (NoneType,)   #(torch.nn.LayerNorm, torch.nn.Embedding)
+        for pn, p in self.named_parameters():
 
-                if pn.endswith('bias'):
-                    # all biases will not be decayed
-                    no_decay.add(fpn)
-                elif pn.endswith('weight') and isinstance(m, whitelist_weight_modules):
-                    # weights of whitelist modules will be weight decayed
-                    decay.add(fpn)
-                elif pn.endswith('weight') and isinstance(m, blacklist_weight_modules):
-                    # weights of blacklist modules will NOT be weight decayed
-                    no_decay.add(fpn)
+            if pn.endswith('bias'):
+                # all biases will not be decayed
+                no_decay.add(pn)
+            else:
+                decay.add(pn)
 
         # special case the position embedding parameter in the root GPT module as not decayed
         # no_decay.add('pos_emb')
@@ -626,7 +621,7 @@ if __name__ == "__main__":
         'listwise-utterance-transformer', 'listwise-sparse-transormer',
         'listwise-hssa'
     ])
-    ap.add_argument('--name', dest='name', required=True)
+    ap.add_argument('--name', dest='name', default=None)
     args = ap.parse_args()
 
     mpnet_name = 'sentence-transformers/all-mpnet-base-v2'
@@ -636,10 +631,11 @@ if __name__ == "__main__":
         finetune_encoder_layers = 2
 
         encoder = mySentenceTransformer(mpnet_name)
-        freeze_hf_model(encoder, finetune_encoder_layers)
+        freeze_hf_model(encoder.model, finetune_encoder_layers)
+        target_encoder = TargetEncoder(encoder)
         context_encoder = ContextEncoderConcat(encoder, context_size=context_size)
         model = ChainCosine(
-            target_encoder=encoder,
+            target_encoder=target_encoder,
             context_encoder=context_encoder,
             projection_size=512,
             context_size=context_size
@@ -649,8 +645,10 @@ if __name__ == "__main__":
             # warmup_period=None,
             # do_periodic_warmup=None,
             lr=3e-6,
-            context_size=context_size,
-            finetune_encoder_layers=finetune_encoder_layers
+            kwargs={
+                'context_size': context_size,
+                'finetune_encoder_layers': finetune_encoder_layers
+            }
         )
     elif args.model == 'pairwise-ema':
         context_size = 6
@@ -658,10 +656,11 @@ if __name__ == "__main__":
         tau = 0.5
 
         encoder = mySentenceTransformer(mpnet_name)
-        freeze_hf_model(encoder, finetune_encoder_layers)
+        freeze_hf_model(encoder.model, finetune_encoder_layers)
+        target_encoder = TargetEncoder(encoder)
         context_encoder = ContextEncoderEMA(encoder, context_size=context_size, tau=tau)
         model = ChainCosine(
-            target_encoder=encoder,
+            target_encoder=target_encoder,
             context_encoder=context_encoder,
             projection_size=512,
             context_size=context_size
@@ -671,20 +670,25 @@ if __name__ == "__main__":
             # warmup_period=None,
             # do_periodic_warmup=None,
             lr=3e-6,
-            context_size=context_size,
-            finetune_encoder_layers=finetune_encoder_layers,
-            tau=tau
+            kwargs={
+                'context_size': context_size,
+                'finetune_encoder_layers': finetune_encoder_layers,
+                'tau': tau
+            }
         )
     elif args.model == 'pairwise-sparse-transformer':
         context_size = 6
-        finetune_encoder_layers = 2
+        finetune_encoder_layers = 1
+        finetune_layers = 2
         tau = 0.5
 
         encoder = mySentenceTransformer(mpnet_name)
-        freeze_hf_model(encoder, finetune_encoder_layers)
+        freeze_hf_model(encoder.model, finetune_encoder_layers)
+        target_encoder = TargetEncoder(encoder)
         context_encoder = ContextEncoderSparseTransformer(mpnet_name, tau=tau)
+        freeze_hf_model(context_encoder.dialogue_model.model, finetune_layers)
         model = ChainCosine(
-            target_encoder=encoder,
+            target_encoder=target_encoder,
             context_encoder=context_encoder,
             projection_size=512,
             context_size=context_size
@@ -694,12 +698,16 @@ if __name__ == "__main__":
             warmup_period=200,
             do_periodic_warmup=True,
             lr=3e-6,
-            context_size=context_size,
-            finetune_encoder_layers=finetune_encoder_layers,
-            tau=tau
+            kwargs={
+                'context_size': context_size,
+                'finetune_encoder_layers': finetune_encoder_layers,
+                'finetune_layers': finetune_layers,
+                'tau': tau
+            }
         )
     elif args.model == 'listwise-utterance-transformer':
         ranker_head_dropout_prob = 0.02
+        finetune_encoder_layers = 3
         config = UtteranceTransformerDMConfig(
             num_attention_heads=4,
             attention_probs_dropout_prob=0.02,
@@ -709,6 +717,7 @@ if __name__ == "__main__":
             is_casual=False
         )
         dialogue_model = UtteranceTransformerDM(config)
+        freeze_hf_model(dialogue_model.encoder.model, finetune_encoder_layers)
         
         model = UtteranceSorter(
             dialogue_model=dialogue_model,
@@ -719,7 +728,10 @@ if __name__ == "__main__":
             warmup_period=200,
             do_periodic_warmup=False,
             lr=3e-6,
-            dropout_prob=ranker_head_dropout_prob
+            kwargs={
+                'dropout_prob': ranker_head_dropout_prob,
+                'finetune_encoder_layers': finetune_encoder_layers
+            }
         )
     elif args.model == 'listwise-sparse-transormer':
         ranker_head_dropout_prob = 0.02
@@ -736,11 +748,14 @@ if __name__ == "__main__":
             warmup_period=200,
             do_periodic_warmup=False,
             lr=1e-5,
-            dropout_prob=ranker_head_dropout_prob
+            kwargs={
+                'dropout_prob': ranker_head_dropout_prob,
+                'finetune_layers': finetune_layers
+            }
         )
     elif args.model == 'listwise-hssa':
         ranker_head_dropout_prob = 0.02
-        finetune_layers = 2
+        finetune_layers = 1
         config = HSSAConfig(
             max_turn_embeddings=20,
             casual_utterance_attention=False,
@@ -753,11 +768,14 @@ if __name__ == "__main__":
             dropout_prob=ranker_head_dropout_prob
         )
         learner_config = LearnerConfig(
-            batch_size=64,
+            batch_size=32,
             warmup_period=200,
             do_periodic_warmup=True,
             lr=3e-6,
-            dropout_prob=ranker_head_dropout_prob
+            kwargs={
+                'dropout_prob': ranker_head_dropout_prob,
+                'finetune_layers': finetune_layers
+            }
         )
 
     # learner = Learner.load_from_checkpoint(

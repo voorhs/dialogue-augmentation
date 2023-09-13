@@ -195,6 +195,7 @@ class HSSADM(nn.Module):
         config.pool_utterances = True
         self.model = HSSAModel.from_pretrained(hf_model_name, config=config)
         self.tokenizer = HSSATokenizer.from_pretrained(hf_model_name)
+        self.model.resize_token_embeddings(len(self.tokenizer))
     
     @property
     def device(self):
@@ -207,3 +208,8 @@ class HSSADM(nn.Module):
     
     def get_hidden_size(self):
         return self.config.hidden_size
+
+    def get_hparams(self):
+        res = self.config.to_dict()
+        res['hf_model_name'] = self.hf_model_name
+        return res
