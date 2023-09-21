@@ -1,9 +1,9 @@
 import torch
 from torch import nn
 from dataclasses import dataclass, asdict
-from aux import myTransformerConfig, mySentenceTransformer, Projector, myTransformerBlock
-from hssa import HSSAModel, HSSAConfig, HSSATokenizer
-from transformers import MPNetModel, MPNetTokenizer
+from .aux import myTransformerConfig, mySentenceTransformer, Projector, myTransformerBlock
+from .hssa import HSSAModel, HSSAConfig, HSSATokenizer
+from transformers import AutoModel, AutoTokenizer
 from transformers.models.mpnet.modeling_mpnet import create_position_ids_from_input_ids
 from collections import defaultdict
 
@@ -102,8 +102,8 @@ class SparseTransformerDM(nn.Module):
 
         self.hf_model_name = hf_model_name
 
-        self.model = MPNetModel.from_pretrained(hf_model_name)
-        self.tokenizer = MPNetTokenizer.from_pretrained(hf_model_name)
+        self.model = AutoModel.from_pretrained(hf_model_name)
+        self.tokenizer = AutoTokenizer.from_pretrained(hf_model_name)
 
     def get_hparams(self):
         return {"hf_model_name": self.hf_model_name}

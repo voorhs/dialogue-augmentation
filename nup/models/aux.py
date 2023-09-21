@@ -13,6 +13,7 @@ class mySentenceTransformer(nn.Module):
     def __init__(
             self,
             model_name='sentence-transformers/all-mpnet-base-v2',
+            model=None,
             pooling=True
         ):
         """If `pooling=False`, then instead of sentence embeddings forward will return list of token embeddings."""
@@ -20,14 +21,17 @@ class mySentenceTransformer(nn.Module):
         self.model_name = model_name
         self.pooling = pooling
 
-        self.model = AutoModel.from_pretrained(model_name)
+        if model is None:
+            self.model = AutoModel.from_pretrained(model_name)
+        else:
+            self.model = model
         self.tokenizer = AutoTokenizer.from_pretrained(model_name)
 
     def forward(self, sentences: List[str]) -> List[torch.Tensor]:
-        input = self.tokenizer(sentences, padding='longest', return_tensors='pt')
+        input = self.tokenizer(sentences, padding='longest', return_tensors='pt').to(self.model.device)
         output = self.model(
-            input_ids=input['input_ids'].to(self.model.device),
-            attention_mask=input['attention_mask'].to(self.model.device)
+            input_ids=input['input_ids'],
+            attention_mask=input['attention_mask']
         )
         
         res = []
