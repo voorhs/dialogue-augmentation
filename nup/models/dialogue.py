@@ -6,6 +6,7 @@ from .hssa import HSSAModel, HSSAConfig, HSSATokenizer
 from transformers import AutoModel, AutoTokenizer
 from transformers.models.mpnet.modeling_mpnet import create_position_ids_from_input_ids
 from collections import defaultdict
+from .train_utils import HParamsPuller
 
 
 @dataclass
@@ -96,7 +97,7 @@ class UtteranceTransformerDM(nn.Module):
         return self.hidden_size
 
 
-class SparseTransformerDM(nn.Module):
+class SparseTransformerDM(nn.Module, HParamsPuller):
     def __init__(self, hf_model_name):
         super().__init__()
 
@@ -104,9 +105,6 @@ class SparseTransformerDM(nn.Module):
 
         self.model = AutoModel.from_pretrained(hf_model_name)
         self.tokenizer = AutoTokenizer.from_pretrained(hf_model_name)
-
-    def get_hparams(self):
-        return {"hf_model_name": self.hf_model_name}
 
     @property
     def device(self):

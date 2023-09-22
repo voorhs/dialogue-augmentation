@@ -253,3 +253,23 @@ class LightningCkptLoadable:
             model=model,
             config=learner_config,
         ).model
+
+
+class HParamsPuller:
+    def get_hparams(self):
+        res = {}
+        for attr, val in vars(self).items():
+            if hasattr(val, 'get_hparams'):
+                tmp = val.get_hparams()
+                tmp = self.add_prefix(tmp, attr)
+                res.update(tmp)
+            elif isinstance(val, (int, float, str, bool)):
+                res[attr] = val
+        return res
+    
+    @staticmethod
+    def add_prefix(dct, prefix):
+        res = {}
+        for key, val in dct.items():
+            res[f'{prefix}.{key}'] = val
+        return res

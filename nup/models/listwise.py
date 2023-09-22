@@ -3,11 +3,11 @@ import torch
 import torch.nn.functional as F
 import numpy as np
 from bisect import bisect_left
-from .train_utils import LightningCkptLoadable
+from .train_utils import LightningCkptLoadable, HParamsPuller
 from typing import Literal
 
 
-class RankerHead(nn.Module):
+class RankerHead(nn.Module, HParamsPuller):
     def __init__(self, hidden_size, dropout_prob):
         super().__init__()
 
@@ -77,10 +77,13 @@ class SortingMetric:
         return ans / max_inversions
 
 
-class ContrasterHead(nn.Module):
+class ContrasterHead(nn.Module, HParamsPuller):
     def __init__(self, hidden_size, dropout_prob):
         super().__init__()
         
+        self.hidden_size = hidden_size
+        self.dropout_prob = dropout_prob
+
         self.drop = nn.Dropout(dropout_prob)
         self.lin = nn.Linear(hidden_size, hidden_size)
         
@@ -91,7 +94,7 @@ class ContrasterHead(nn.Module):
         return x
 
 
-class PairingLoss(nn.Module):
+class PairingLoss(nn.Module, HParamsPuller):
     def __init__(self, reduction: Literal['mean', 'sum', 'none'] = 'mean'):
         super().__init__()
         self.reduction = reduction
@@ -126,26 +129,21 @@ class PairingLoss(nn.Module):
         return loss
 
 
-class UtteranceSorter(nn.Module, LightningCkptLoadable):
-    def __init__(self, dialogue_model, dropout_prob):
+class UtteranceSorter(nn.Module, LightningCkptLoadable, HParamsPuller):
+    def __init__(self, dialogue_model, dropout_prob, with_contrastive=False):
         super().__init__()
 
         self.dialogue_model = dialogue_model
         self.dropout_prob = dropout_prob
+        self.with_contrastive = with_contrastive
         
         self.ranker_head = RankerHead(dialogue_model.get_hidden_size(), dropout_prob)
         self.sorting_loss = SortingLoss()
         self.metric_fn = SortingMetric()
         
-        self.contraster_head = ContrasterHead(dialogue_model.get_hidden_size(), dropout_prob)
-        self.pairing_loss = PairingLoss()
-
-    def get_hparams(self):
-        res = {
-            "head_dropout_prob": self.dropout_prob,
-        }
-        res.update(self.dialogue_model.get_hparams())
-        return res
+        if self.with_contrastive:
+            self.contraster_head = ContrasterHead(dialogue_model.get_hidden_size(), dropout_prob)
+            self.pairing_loss = PairingLoss()
 
     @property
     def device(self):
@@ -153,7 +151,7 @@ class UtteranceSorter(nn.Module, LightningCkptLoadable):
 
     def get_logits(self, batch):
         hidden_states = self.dialogue_model(batch)
-        return self.contraster_head(hidden_states), self.ranker_head(hidden_states)
+        return hidden_states, self.ranker_head(hidden_states)
 
     def forward(self, batch):
         device = self.device
@@ -165,11 +163,12 @@ class UtteranceSorter(nn.Module, LightningCkptLoadable):
         mask = self._make_mask(dia_lens, device)
         ranks_logits.masked_fill_(mask, -1e4)
 
-        sorting_loss = self.sorting_loss(ranks_logits, dia_lens)
-        pairing_loss = self.pairing_loss(hidden_states, mask, dia_lens)
+        loss = self.sorting_loss(ranks_logits, dia_lens)
+        if self.with_contrastive:
+            hidden_states = self.contraster_head(hidden_states)
+            pairing_loss = self.pairing_loss(hidden_states, mask, dia_lens)
+            loss = (loss * 5 + pairing_loss) / 6
         metric = self.metric_fn(ranks_logits, mask, dia_lens)
-
-        loss = (sorting_loss * 5 + pairing_loss) / 6
 
         return loss, metric
 

@@ -1,12 +1,12 @@
 import torch.nn as nn
-from .train_utils import LightningCkptLoadable
+from .train_utils import LightningCkptLoadable, HParamsPuller
 import torch
 import torch.nn.functional as F
 import numpy as np
 from .aux import mySentenceTransformer, Projector
 
 
-class ChainCosine(nn.Module, LightningCkptLoadable):
+class ChainCosine(nn.Module, LightningCkptLoadable, HParamsPuller):
     def __init__(self, target_encoder: mySentenceTransformer, context_encoder, projection_size, context_size, temperature=1, k=1, hard_negative=False):
         super().__init__()
 
@@ -27,11 +27,6 @@ class ChainCosine(nn.Module, LightningCkptLoadable):
             input_size=self.target_encoder.get_encoding_size(),
             output_size=self.projection_size
         )
-
-    def get_hparams(self):
-        return {
-            "context_size": self.context_size,
-        }
 
     @property
     def device(self):
@@ -106,8 +101,7 @@ class ChainCosine(nn.Module, LightningCkptLoadable):
         return batch
         
 
-
-class TargetEncoder(nn.Module):
+class TargetEncoder(nn.Module, HParamsPuller):
     def __init__(self, sentence_encoder: mySentenceTransformer, n_speakers=2, speaker_embedding_dim=8):
         super().__init__()
 
@@ -134,7 +128,7 @@ class TargetEncoder(nn.Module):
         return self.speaker_embedding_dim + self.sentence_encoder.get_sentence_embedding_size()
 
 
-class ContextEncoderConcat(nn.Module):
+class ContextEncoderConcat(nn.Module, HParamsPuller):
     def __init__(self, sentence_encoder: mySentenceTransformer, context_size):
         super().__init__()
 
@@ -165,14 +159,14 @@ class ContextEncoderConcat(nn.Module):
         return self.sentence_encoder.get_sentence_embedding_size() * self.context_size
 
 
-class ContextEncoderEMA(nn.Module):
+class ContextEncoderEMA(nn.Module, HParamsPuller):
     def __init__(self, sentence_encoder: mySentenceTransformer, context_size, tau):
         super().__init__()
 
         self.sentence_encoder = sentence_encoder
         self.context_size = context_size
         self.tau = tau
-    
+
     def forward(self, batch):
         uts = []
         lens = []
@@ -209,7 +203,7 @@ class ContextEncoderEMA(nn.Module):
         return 2 * self.sentence_encoder.get_sentence_embedding_size()
 
 
-class ContextEncoderDM(nn.Module):
+class ContextEncoderDM(nn.Module, HParamsPuller):
     def __init__(self, dialogue_model, tau):
         super().__init__()
         self.tau = tau

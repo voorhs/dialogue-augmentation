@@ -80,17 +80,12 @@ if __name__ == "__main__":
             # do_periodic_warmup=None,
             lr=3e-5,
             kwargs={
-                'context_size': context_size,
                 'finetune_encoder_layers': finetune_encoder_layers,
-                'encoder_name': encoder_name,
-                'k': k,
-                'temperature': temperature,
-                'hard_negative': hard_negative
             }
         )
     elif args.model == 'pairwise-ema':
         context_size = 3
-        finetune_encoder_layers = 0
+        finetune_encoder_layers = 2
         tau = 0.5
         encoder_name = amazon_name
         k = 5
@@ -111,18 +106,12 @@ if __name__ == "__main__":
             hard_negative=hard_negative
         )
         learner_config = LearnerConfig(
-            batch_size=96,
+            batch_size=128,
             # warmup_period=None,
             # do_periodic_warmup=None,
             lr=3e-5,
             kwargs={
-                'context_size': context_size,
                 'finetune_encoder_layers': finetune_encoder_layers,
-                'tau': tau,
-                'encoder_name': encoder_name,
-                'k': k,
-                'temperature': temperature,
-                'hard_negative': hard_negative
             }
         )
     elif args.model == 'pairwise-sparse-transformer':
@@ -149,15 +138,13 @@ if __name__ == "__main__":
             do_periodic_warmup=False,
             lr=3e-6,
             kwargs={
-                'context_size': context_size,
-                'finetune_layers': finetune_layers,
-                'tau': tau
+                'finetune_encoder_layers': finetune_layers,
             }
         )
     elif args.model == 'listwise-utterance-transformer':
         head_dropout_prob = 0.02
         finetune_encoder_layers = 3
-        encoder_name = amazon_name
+        encoder_name = mpnet_name
         config = UtteranceTransformerDMConfig(
             num_attention_heads=4,
             attention_probs_dropout_prob=0.02,
@@ -179,9 +166,7 @@ if __name__ == "__main__":
             do_periodic_warmup=False,
             lr=3e-6,
             kwargs={
-                'dropout_prob': head_dropout_prob,
                 'finetune_encoder_layers': finetune_encoder_layers,
-                'encoder_name': encoder_name
             }
         )
     elif args.model == 'listwise-sparse-transformer':
@@ -200,7 +185,6 @@ if __name__ == "__main__":
             do_periodic_warmup=False,
             lr=1e-5,
             kwargs={
-                'dropout_prob': head_dropout_prob,
                 'finetune_layers': finetune_layers
             }
         )
@@ -225,13 +209,12 @@ if __name__ == "__main__":
             do_periodic_warmup=True,
             lr=3e-6,
             kwargs={
-                'dropout_prob': head_dropout_prob,
                 'finetune_layers': finetune_layers
             }
         )
 
     # learner = Learner.load_from_checkpoint(
-    #     checkpoint_path='/home/alekseev_ilya/dialogue-augmentation/nup/logs/training/pairwise-ema-amazon-resumed/checkpoints/last.ckpt',
+    #     checkpoint_path=,
     #     model=model,
     #     config=learner_config
     # )
@@ -315,7 +298,8 @@ if __name__ == "__main__":
 
     # do magic!
     trainer.fit(
-        learner, train_loader, val_loader
+        learner, train_loader, val_loader,
+        # ckpt_path='/home/alekseev_ilya/dialogue-augmentation/nup/logs/training/listwise-kldiv-3-finetune-layers-non-periodic/checkpoints/last.ckpt'
     )
 
     print('Finished at', datetime.now().strftime("%H:%M:%S %d-%m-%Y"))
