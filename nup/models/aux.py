@@ -76,7 +76,7 @@ class Projector(nn.Module):
         x = x + F.gelu(self.linear_1(self.norm1(x)))
         x = x + F.gelu(self.linear_2(self.norm2(x)))
 
-        return F.normalize(self.final(x), dim=1)
+        return F.normalize(self.final(x), dim=-1)
 
 
 @dataclass
