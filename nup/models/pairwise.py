@@ -56,10 +56,13 @@ class ChainCosine(nn.Module, LightningCkptLoadable):
         target_encodings = self.target_projector(target_encodings)
 
         return context_encodings, target_encodings
-
-    def forward(self, batch):
+    
+    def get_logits(self, batch, temperature):
         context_encodings, target_encodings = self.get_encodings(batch)
-        logits = context_encodings @ target_encodings.T / self.temperature
+        return context_encodings @ target_encodings.T / temperature
+    
+    def forward(self, batch):
+        logits = self.get_logits(batch, self.temperature)
         
         if self.hard_negative:
             mask = torch.eye(len(batch), dtype=torch.bool, device=logits.device)
@@ -85,15 +88,23 @@ class ChainCosine(nn.Module, LightningCkptLoadable):
         return loss, topk_accuracy
 
     @torch.no_grad()
-    def score(self, dialogue):
+    def score(self, dialogue, temperature=None):
+        batch = self.make_batch_from_dia(dialogue)
+        if temperature is None:
+            temperature = self.temperature
+        logits = self.get_logits(batch, self.temperature)
+        return F.softmax(logits, dim=1).diag().log10().mean().cpu().item()
+    
+    @staticmethod
+    def make_batch_from_dia(dialogue):
         batch = []
         for i in range(1, len(dialogue)):
             batch.append({
                 'context': dialogue[:i],
                 'target': dialogue[i]
             })
-        logits = self.get_logits(batch)
-        return F.softmax(logits, dim=1).diag().log10().mean().cpu().item()
+        return batch
+        
 
 
 class TargetEncoder(nn.Module):

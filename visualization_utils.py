@@ -6,7 +6,7 @@ import json
 import numpy as np
 import pandas as pd
 from redlines import Redlines
-from IPython.display import Markdown, display, HTML
+from IPython.display import Markdown, display
 from Levenshtein import distance, ratio, jaro
 from typing import Literal
 from difflib import HtmlDiff

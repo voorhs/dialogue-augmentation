@@ -169,7 +169,7 @@ class UtteranceSorter(nn.Module, LightningCkptLoadable):
         pairing_loss = self.pairing_loss(hidden_states, mask, dia_lens)
         metric = self.metric_fn(ranks_logits, mask, dia_lens)
 
-        loss = (sorting_loss * 2 + pairing_loss) / 3
+        loss = (sorting_loss * 5 + pairing_loss) / 6
 
         return loss, metric
 

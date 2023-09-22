@@ -156,7 +156,7 @@ if __name__ == "__main__":
         )
     elif args.model == 'listwise-utterance-transformer':
         head_dropout_prob = 0.02
-        finetune_encoder_layers = 1
+        finetune_encoder_layers = 3
         encoder_name = amazon_name
         config = UtteranceTransformerDMConfig(
             num_attention_heads=4,
