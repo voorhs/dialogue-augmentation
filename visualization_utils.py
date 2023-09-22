@@ -5,31 +5,14 @@ from dgac_clustering import Clusters
 import json
 import numpy as np
 import pandas as pd
-from sklearn.feature_extraction.text import TfidfVectorizer
 from redlines import Redlines
-from IPython.display import Markdown, display
-from typing import List
-from sentence_encoding import sentence_encoder
+from IPython.display import Markdown, display, HTML
 from Levenshtein import distance, ratio, jaro
+from typing import Literal
+from difflib import HtmlDiff
+import html2markdown
+import os
 
-
-def assign_cluster_names(labels, texts) -> List[str]:
-    n_clusters = len(np.unique(labels))    
-
-    cluster_utterances = []
-    for i in range(n_clusters):
-        cluster_texts = [txt for j, txt in enumerate(texts) if labels[j] == i]
-        cluster_utterances.append('. '.join(cluster_texts))
-
-    vectorizer = TfidfVectorizer(min_df=5, stop_words='english')
-    vec = vectorizer.fit_transform(cluster_utterances).toarray()
-
-    titles = np.zeros_like(vec)
-    for i, topk in enumerate(np.argpartition(vec, kth=[-1, -2, -3], axis=1)[:, -3:]):
-        titles[i, topk] = vec[i, topk]
-    
-    return [', '.join(title) for title in vectorizer.inverse_transform(titles)]
-    
 
 def show_clusters(is_system) -> None:
     """
@@ -52,11 +35,9 @@ def show_clusters(is_system) -> None:
 
     # get names of clusters via tf-idf
     texts = [txt for i, txt in enumerate(json.load(open('clust-data/utterances.json', 'r'))) if speaker[i] == is_system]
-    labels = clusterer.labels[speaker == is_system] - is_system * clusterer.n_clusters // 2
-    cluster_names = assign_cluster_names(labels, texts)
-    
+    labels = clusterer.labels[speaker == 1] - is_system * clusterer.n_clusters // 2
     apndx = 'system' if is_system else 'user'
-    json.dump(cluster_names, open(f'clust-data/cluster-tfidf-names-{apndx}.json', 'w'))
+    cluster_names = json.load(open(f'clust-data/cluster-tfidf-names-{apndx}.json', 'w'))
 
     projected['clust_name'] = '-'
     for i in range(clusterer.n_clusters // 2):
@@ -95,14 +76,21 @@ def show_augmented(i, name) -> None:
     display(Markdown(Redlines(orig, aug).output_markdown))
 
 
-def show_similarities(i, name, func, display_mkdown=True, return_mkdown=False):
+def show_similarities(
+        i, name,
+        func,
+        view: Literal['redlines', 'two-sided'] = 'redlines',
+        with_intent=True,
+        display_mkdown=True,
+        return_raw=False
+    ):
     """
     Show difference between original dialogue and augmented with cluster name provided for each utterance and dialogues similarity.
     
     Params
     ------
     - i: int, index of dialogue to construct from aug-data/utterances.json
-    - name: {'original', 'clare', 'embedding', 'checklist'}, augmentation method
+    - name: name of json from `aug-data`
     - func: similarity function over bag of nodes vectorization 
     """
 
@@ -118,20 +106,19 @@ def show_similarities(i, name, func, display_mkdown=True, return_mkdown=False):
     names = json.load(open(f'clust-data/cluster-tfidf-names-user.json'))
     names.extend(json.load(open(f'clust-data/cluster-tfidf-names-system.json')))
 
-    # parse to redlines markdown 
-    orig = []
-    aug = []
-    speaker_alias = "AB"
-    for item, lab in zip(orig_obj, orig_labels):
-        orig.append(f"[{speaker_alias[item['speaker']]}] [label: {lab}] [name: {names[lab]}] {item['utterance']}")
+    # parse
+    def parse_item(item_lab):
+        item, lab = item_lab
+        speaker_alias = "AB"
+        spe = f"[{speaker_alias[item['speaker']]}]"
+        intent = f"[label: {lab}] [name: {names[lab]}]"
+        ut = item['utterance']
+        if with_intent:
+            return ' '.join([spe, intent, ut])
+        return ' '.join([spe, ut])
 
-    for item, lab in zip(aug_obj, aug_labels):
-        aug.append(f"[{speaker_alias[item['speaker']]}] [label: {lab}] [name: {names[lab]}] {item['utterance']}")
-
-    # load vectorizations
-    orig_vecs = np.load(f'aug-data/vectors-original.npy')[i]
-    aug_vecs = np.load(f'aug-data/vectors-{name}.npy')[i]
-    intent_similarity = func(orig_vecs, aug_vecs)
+    orig = list(map(parse_item, zip(orig_obj, orig_labels)))
+    aug = list(map(parse_item, zip(aug_obj, aug_labels)))
 
     # display some edit distance
     orig_txt = ' '.join(orig)
@@ -139,22 +126,43 @@ def show_similarities(i, name, func, display_mkdown=True, return_mkdown=False):
     levenstein = distance(orig_txt, aug_txt)
     similarity_ratio = ratio(orig_txt, aug_txt)
     similarity_jaro = jaro(orig_txt, aug_txt)
+    sim = f'{levenstein=}, {similarity_ratio=:.3f}, {similarity_jaro=:.3f}\n\n'
+    if with_intent:
+        orig_vecs = np.load(f'aug-data/vectors-original.npy')[i]
+        aug_vecs = np.load(f'aug-data/vectors-{name}.npy')[i]
+        intent_similarity = func(orig_vecs, aug_vecs)
+        sim = f'{intent_similarity=:.3f}, ' + sim
 
-    mkdown = Redlines('\n'.join(orig), '\n'.join(aug)).output_markdown
-    mkdown = f'{intent_similarity=:.3f}, {levenstein=}, {similarity_ratio=:.3f}, {similarity_jaro=:.3f}\n\n' + mkdown
+    if view == 'redlines':
+        raw = Redlines('\n'.join(orig), '\n'.join(aug)).output_markdown
+    elif view == 'two-sided':
+        raw = HtmlDiff(wrapcolumn=70).make_table(orig, aug)
+        raw = html2markdown.convert(raw)
+    else:
+        raise ValueError('unexpected `view` value')
     
+    raw = sim + raw
+
     if display_mkdown:
-        display(Markdown(mkdown))
+        display(Markdown(raw))
 
-    if return_mkdown:
-        return mkdown
+    if return_raw:
+        return raw
 
 
-def make_demo(name, func, n_dialogues=15):
+def make_demo(
+        name,
+        func,
+        view: Literal['redlines', 'two-sided'] = 'redlines',
+        with_intent=True,
+        n_dialogues=15
+    ):
     """Save all aug visualisations to .md file"""
     res = f"# Demo of {name}\n"
     for i in range(n_dialogues):
-        mkdown = show_similarities(i, name, func, display_mkdown=False, return_mkdown=True)
-        res += f'## {i}-th dialogue\n{mkdown}\n'
-    with open(f'aug-data/demo-{name}.md', 'w') as f:
+        mkdown = show_similarities(i, name, func, view, with_intent, display_mkdown=False, return_raw=True)
+        res += f'\n## dialogue \# {i}\n{mkdown}\n'
+    if not os.path.exists('demo'):
+        os.makedirs('demo')
+    with open(f'demo/{name}.md', 'w') as f:
         f.write(res)

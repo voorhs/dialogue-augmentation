@@ -4,16 +4,19 @@ import torch.nn.functional as F
 import numpy as np
 from bisect import bisect_left
 from .train_utils import LightningCkptLoadable
+from typing import Literal
 
 
 class RankerHead(nn.Module):
     def __init__(self, hidden_size, dropout_prob):
         super().__init__()
 
+        self.lin = nn.Linear(hidden_size, hidden_size)
         self.dropout = nn.Dropout(dropout_prob)
-        self.ranker = nn.Linear(hidden_size, 1)
+        self.ranker = nn.Linear(hidden_size, 1, bias=False)
     
     def forward(self, x: torch.Tensor):
+        x = self.lin(x) + x
         x = self.dropout(x)
         x = self.ranker(x)
         return x.squeeze(-1)
@@ -74,6 +77,55 @@ class SortingMetric:
         return ans / max_inversions
 
 
+class ContrasterHead(nn.Module):
+    def __init__(self, hidden_size, dropout_prob):
+        super().__init__()
+        
+        self.drop = nn.Dropout(dropout_prob)
+        self.lin = nn.Linear(hidden_size, hidden_size)
+        
+    def forward(self, x):
+        # x: (B, T, H)
+        x = self.lin(self.drop(x)) + x
+        x = torch.nn.functional.normalize(x, dim=2)
+        return x
+
+
+class PairingLoss(nn.Module):
+    def __init__(self, reduction: Literal['mean', 'sum', 'none'] = 'mean'):
+        super().__init__()
+        self.reduction = reduction
+
+    def forward(self, hidden_states, mask, dia_lens):
+        B, T, H = hidden_states.shape
+        device = hidden_states.device
+        
+        context_indexes = torch.arange(T-1)
+        target_indexes = torch.arange(1, T)
+        pos_scores = torch.zeros_like(hidden_states)
+        tmp = hidden_states[:, context_indexes, :] * hidden_states[:, target_indexes, :]
+        pos_scores[:, context_indexes, :] += tmp
+        pos_scores[:, target_indexes, :] += tmp
+        
+        mask2 = mask.clone()
+        dia_lens_expanded = torch.tensor(dia_lens, device=device)
+        mask2[torch.arange(B, device=device), dia_lens_expanded-1] = True
+        pos_scores = pos_scores.sum(dim=2).masked_fill(mask2, -1e4).exp().masked_select(~mask2)
+
+        hidden_states = hidden_states.view(-1, H)
+        all_scores = hidden_states @ hidden_states.T
+        
+        mask3 = mask.view(1, -1) & torch.eye(B*T).bool().to(device)
+        neg_scores = all_scores.masked_fill(mask3, -1e4).exp().sum(dim=1).masked_select(~mask2.view(-1))
+
+        loss = pos_scores.div(neg_scores).log().neg()
+        if self.reduction == 'mean':
+            loss = loss.mean()
+        elif self.reduction == 'mean':
+            loss = loss.sum()
+        return loss
+
+
 class UtteranceSorter(nn.Module, LightningCkptLoadable):
     def __init__(self, dialogue_model, dropout_prob):
         super().__init__()
@@ -82,8 +134,11 @@ class UtteranceSorter(nn.Module, LightningCkptLoadable):
         self.dropout_prob = dropout_prob
         
         self.ranker_head = RankerHead(dialogue_model.get_hidden_size(), dropout_prob)
-        self.loss_fn = SortingLoss()
+        self.sorting_loss = SortingLoss()
         self.metric_fn = SortingMetric()
+        
+        self.contraster_head = ContrasterHead(dialogue_model.get_hidden_size(), dropout_prob)
+        self.pairing_loss = PairingLoss()
 
     def get_hparams(self):
         res = {
@@ -98,20 +153,23 @@ class UtteranceSorter(nn.Module, LightningCkptLoadable):
 
     def get_logits(self, batch):
         hidden_states = self.dialogue_model(batch)
-        return self.ranker_head(hidden_states)
+        return self.contraster_head(hidden_states), self.ranker_head(hidden_states)
 
     def forward(self, batch):
         device = self.device
         dia_lens = [len(dia) for dia in batch]
 
-        ranks_logits = self.get_logits(batch)
+        hidden_states, ranks_logits = self.get_logits(batch)
 
         # zero attention to padding token-utterances
         mask = self._make_mask(dia_lens, device)
         ranks_logits.masked_fill_(mask, -1e4)
 
-        loss = self.loss_fn(ranks_logits, dia_lens)
+        sorting_loss = self.sorting_loss(ranks_logits, dia_lens)
+        pairing_loss = self.pairing_loss(hidden_states, mask, dia_lens)
         metric = self.metric_fn(ranks_logits, mask, dia_lens)
+
+        loss = (sorting_loss * 2 + pairing_loss) / 3
 
         return loss, metric
 

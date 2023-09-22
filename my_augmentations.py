@@ -3,8 +3,7 @@ import numpy as np
 import json
 import nltk
 from nltk.corpus import stopwords
-from transformers import AutoTokenizer, AutoModelForCausalLM, pipeline
-import string
+from transformers import AutoTokenizer, pipeline
 from typing import List, Literal
 
 
@@ -764,32 +763,68 @@ Specific input:
 [/INST]"""
 
 
+from nup.models.dialogue import UtteranceTransformerDMConfig, UtteranceTransformerDM
+from nup.models.listwise import UtteranceSorter
+
+class ListwiseShuffler:
+    def __init__(
+            self,
+            ckpt_path,
+            device
+        ):
+        _ranker_head_dropout_prob = 0.02
+        _encoder_name = 'aws-ai/dse-roberta-base'
+        _config = UtteranceTransformerDMConfig(
+            num_attention_heads=4,
+            attention_probs_dropout_prob=0.02,
+            n_layers=4,
+            encoder_name=_encoder_name,
+            embed_turn_ids=False,
+            is_casual=False
+        )
+        _dialogue_model = UtteranceTransformerDM(_config)
+        _model = UtteranceSorter(
+            dialogue_model=_dialogue_model,
+            dropout_prob=_ranker_head_dropout_prob
+        )
+        self.model = UtteranceSorter.from_checkpoint(
+            path_to_ckpt=ckpt_path,
+            model=_model,
+            map_location=device
+        ).eval()
+
+    def from_file_system(self, name):
+        dialogues = json.load(open('aug-data/original.json', 'r'))
+        aug_dialogues = self.model.augment(dialogues)
+        json.dump(aug_dialogues, open(f'aug-data/{name}.json', 'w'))
+
+
 if __name__ == "__main__":
 
-    inserter = Inserter(
-        fraction=0.5,
-        score_threshold=0.005,
-        k=5,
-        mask_utterance_level=True,
-        fill_utterance_level=2,
-        model='microsoft/mpnet-base',
-        device='cuda'
-    )
-    inserter.from_file_system('inserter')
+    # inserter = Inserter(
+    #     fraction=0.5,
+    #     score_threshold=0.005,
+    #     k=5,
+    #     mask_utterance_level=True,
+    #     fill_utterance_level=2,
+    #     model='microsoft/mpnet-base',
+    #     device='cuda'
+    # )
+    # inserter.from_file_system('inserter')
     
-    replacer = Replacer(
-        k=3,
-        fill_utterance_level=2,
-        model='microsoft/mpnet-base',
-        device='cuda'
-    )
-    replacer.from_file_system('replacer')
+    # replacer = Replacer(
+    #     k=3,
+    #     fill_utterance_level=2,
+    #     model='microsoft/mpnet-base',
+    #     device='cuda'
+    # )
+    # replacer.from_file_system('replacer')
 
-    back_translator = BackTranslator(
-        language='ru',
-        device='cuda'
-    )
-    back_translator.from_file_system('back_translator')
+    # back_translator = BackTranslator(
+    #     language='ru',
+    #     device='cuda'
+    # )
+    # back_translator.from_file_system('back_translator')
 
     # model = 'meta-llama/Llama-2-13b-chat-hf'
 
@@ -819,3 +854,8 @@ if __name__ == "__main__":
     # LlamaParaphraser('creative', llm, tokenizer).from_file_system('llm_creative')
     # LlamaParaphraser('playful', llm, tokenizer).from_file_system('llm_playful')
     
+    listwise_shuffler = ListwiseShuffler(
+        ckpt_path='/home/alekseev_ilya/dialogue-augmentation/nup/logs/training/listwise-utterance-transformer-amazon-resumed/checkpoints/last.ckpt',
+        device='cuda:0'
+    )
+    listwise_shuffler.from_file_system('listwise_shuffler')

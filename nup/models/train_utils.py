@@ -246,7 +246,7 @@ class Learner(pl.LightningModule):
 
 class LightningCkptLoadable:
     @staticmethod
-    def from_checkpoint(path_to_ckpt, model, learner_config, map_location=None):
+    def from_checkpoint(path_to_ckpt, model, learner_config=LearnerConfig(), map_location=None):
         return Learner.load_from_checkpoint(
             path_to_ckpt,
             map_location=map_location,

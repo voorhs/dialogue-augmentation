@@ -1,3 +1,6 @@
 VENV/
-nup/dataset
-nup/lightning_logs
+nup/dialogues
+nup/pairs
+logs
+*__pycache__*
+*-data

@@ -155,8 +155,8 @@ if __name__ == "__main__":
             }
         )
     elif args.model == 'listwise-utterance-transformer':
-        ranker_head_dropout_prob = 0.02
-        finetune_encoder_layers = 0
+        head_dropout_prob = 0.02
+        finetune_encoder_layers = 1
         encoder_name = amazon_name
         config = UtteranceTransformerDMConfig(
             num_attention_heads=4,
@@ -171,7 +171,7 @@ if __name__ == "__main__":
         
         model = UtteranceSorter(
             dialogue_model=dialogue_model,
-            dropout_prob=ranker_head_dropout_prob
+            dropout_prob=head_dropout_prob
         )
         learner_config = LearnerConfig(
             batch_size=192,
@@ -179,20 +179,20 @@ if __name__ == "__main__":
             do_periodic_warmup=False,
             lr=3e-6,
             kwargs={
-                'dropout_prob': ranker_head_dropout_prob,
+                'dropout_prob': head_dropout_prob,
                 'finetune_encoder_layers': finetune_encoder_layers,
                 'encoder_name': encoder_name
             }
         )
     elif args.model == 'listwise-sparse-transformer':
-        ranker_head_dropout_prob = 0.02
+        head_dropout_prob = 0.02
         finetune_layers = 2
         dialogue_model = SparseTransformerDM(mpnet_name)
         freeze_hf_model(dialogue_model.model, finetune_layers)
         
         model = UtteranceSorter(
             dialogue_model=dialogue_model,
-            dropout_prob=ranker_head_dropout_prob
+            dropout_prob=head_dropout_prob
         )
         learner_config = LearnerConfig(
             batch_size=32,
@@ -200,13 +200,13 @@ if __name__ == "__main__":
             do_periodic_warmup=False,
             lr=1e-5,
             kwargs={
-                'dropout_prob': ranker_head_dropout_prob,
+                'dropout_prob': head_dropout_prob,
                 'finetune_layers': finetune_layers
             }
         )
     elif args.model == 'listwise-hssa':
         # doesn't work for some reason
-        ranker_head_dropout_prob = 0.02
+        head_dropout_prob = 0.02
         finetune_layers = 1
         config = HSSAConfig(
             max_turn_embeddings=20,
@@ -217,7 +217,7 @@ if __name__ == "__main__":
         freeze_hssa(dialogue_model.model, 2)
         model = UtteranceSorter(
             dialogue_model=dialogue_model,
-            dropout_prob=ranker_head_dropout_prob
+            dropout_prob=head_dropout_prob
         )
         learner_config = LearnerConfig(
             batch_size=32,
@@ -225,14 +225,15 @@ if __name__ == "__main__":
             do_periodic_warmup=True,
             lr=3e-6,
             kwargs={
-                'dropout_prob': ranker_head_dropout_prob,
+                'dropout_prob': head_dropout_prob,
                 'finetune_layers': finetune_layers
             }
         )
 
     # learner = Learner.load_from_checkpoint(
-    #     # checkpoint_path='/home/alekseev_ilya/dialogue-augmentation/nup/logs/training/pairwise/checkpoints/last.ckpt',
-    #     model=model
+    #     checkpoint_path='/home/alekseev_ilya/dialogue-augmentation/nup/logs/training/pairwise-ema-amazon-resumed/checkpoints/last.ckpt',
+    #     model=model,
+    #     config=learner_config
     # )
     learner = Learner(model, learner_config)
 
@@ -283,7 +284,7 @@ if __name__ == "__main__":
         max_time={'hours': 24},
         
         # max_time={'minutes': 5},
-        # max_steps=1501,
+        # max_steps=0,
 
         # hardware settings
         accelerator='gpu',
@@ -297,14 +298,14 @@ if __name__ == "__main__":
         enable_progress_bar=False,
         profiler=None,
         callbacks=[checkpoint_callback, lr_monitor],
-        # log_every_n_steps=50,
+        # log_every_n_steps=5,
 
         # check if model is implemented correctly
-        overfit_batches=2,
+        overfit_batches=False,
 
         # check training_step and validation_step doesn't fail
-        fast_dev_run=2,
-        num_sanity_val_steps=2
+        fast_dev_run=False,
+        num_sanity_val_steps=False
     )
 
     # ======= START TRAINING =======
@@ -314,8 +315,7 @@ if __name__ == "__main__":
 
     # do magic!
     trainer.fit(
-        learner, train_loader, val_loader,
-        # ckpt_path='/home/alekseev_ilya/dialogue-augmentation/nup/logs/training/listwise-utterance-transformer-amazon/checkpoints/last.ckpt'
+        learner, train_loader, val_loader
     )
 
     print('Finished at', datetime.now().strftime("%H:%M:%S %d-%m-%Y"))
