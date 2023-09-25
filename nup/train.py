@@ -10,7 +10,7 @@ if __name__ == "__main__":
     ap.add_argument('--model', dest='model', required=True, choices=[
         'pairwise-cat', 'pairwise-ema', 'pairwise-sparse-transformer',
         'listwise-utterance-transformer', 'listwise-sparse-transformer',
-        'listwise-hssa'
+        'listwise-hssa', 'listwise-clf'
     ])
     ap.add_argument('--name', dest='name', default=None)
     ap.add_argument('--cuda', dest='cuda', default='0')
@@ -51,12 +51,12 @@ if __name__ == "__main__":
     from models.aux import mySentenceTransformer
     from models.pairwise import TargetEncoder, ContextEncoderConcat, ContextEncoderEMA, ContextEncoderDM, ChainCosine
     from models.dialogue import UtteranceTransformerDM, UtteranceTransformerDMConfig, SparseTransformerDM, HSSAConfig, HSSADM
-    from models.listwise import UtteranceSorter
+    from models.listwise import UtteranceSorter, ClfUtteranceSorter
 
     if args.model == 'pairwise-cat':
         context_size = 3
-        finetune_encoder_layers = 0
-        encoder_name = amazon_name
+        finetune_encoder_layers = 1
+        encoder_name = 'aws-ai/dse-bert-large'
         k = 5
         temperature = 0.05
         hard_negative = False
@@ -78,7 +78,7 @@ if __name__ == "__main__":
             batch_size=128,
             # warmup_period=None,
             # do_periodic_warmup=None,
-            lr=3e-5,
+            lr=7e-6,
             kwargs={
                 'finetune_encoder_layers': finetune_encoder_layers,
             }
@@ -143,7 +143,7 @@ if __name__ == "__main__":
         )
     elif args.model == 'listwise-utterance-transformer':
         head_dropout_prob = 0.02
-        finetune_encoder_layers = 3
+        finetune_encoder_layers = 0
         encoder_name = mpnet_name
         config = UtteranceTransformerDMConfig(
             num_attention_heads=4,
@@ -156,6 +156,9 @@ if __name__ == "__main__":
         dialogue_model = UtteranceTransformerDM(config)
         freeze_hf_model(dialogue_model.encoder.model, finetune_encoder_layers)
         
+        #!
+        dialogue_model.requires_grad_(False)
+        
         model = UtteranceSorter(
             dialogue_model=dialogue_model,
             dropout_prob=head_dropout_prob
@@ -164,7 +167,7 @@ if __name__ == "__main__":
             batch_size=192,
             warmup_period=200,
             do_periodic_warmup=False,
-            lr=3e-6,
+            lr=3e-5,
             kwargs={
                 'finetune_encoder_layers': finetune_encoder_layers,
             }
@@ -212,9 +215,52 @@ if __name__ == "__main__":
                 'finetune_layers': finetune_layers
             }
         )
+    elif args.model == 'listwise-clf':
+        head_dropout_prob = 0.02
+        encoder_name = mpnet_name
+        config = UtteranceTransformerDMConfig(
+            num_attention_heads=4,
+            attention_probs_dropout_prob=0.02,
+            n_layers=4,
+            encoder_name=encoder_name,
+            embed_turn_ids=False,
+            is_casual=False
+        )
+        _dialogue_model = UtteranceTransformerDM(config)
+        
+        _model = UtteranceSorter(
+            dialogue_model=_dialogue_model,
+            dropout_prob=head_dropout_prob
+        )
 
+        _model2 = UtteranceSorter.from_checkpoint(
+            path_to_ckpt='/home/alekseev_ilya/dialogue-augmentation/nup/logs/training/listwise-best/checkpoints/last.ckpt',
+            model=_model,
+            map_location='cuda'
+        )
+        del _model
+        del _dialogue_model
+
+        finetune_encoder_layers = 0
+        dialogue_model = _model2.dialogue_model
+        freeze_hf_model(dialogue_model.encoder.model, finetune_encoder_layers)
+        
+        model = ClfUtteranceSorter(
+            dialogue_model=dialogue_model,
+            dropout_prob=head_dropout_prob,
+            max_n_uts=20
+        )
+        learner_config = LearnerConfig(
+            batch_size=192,
+            warmup_period=200,
+            do_periodic_warmup=False,
+            lr=3e-6,
+            kwargs={
+                'finetune_encoder_layers': finetune_encoder_layers,
+            }
+        )
     # learner = Learner.load_from_checkpoint(
-    #     checkpoint_path=,
+    #     checkpoint_path='/home/alekseev_ilya/dialogue-augmentation/nup/logs/training/listwise-best/checkpoints/last.ckpt',
     #     model=model,
     #     config=learner_config
     # )
@@ -264,7 +310,7 @@ if __name__ == "__main__":
 
     trainer = pl.Trainer(
         # max_epochs=1,
-        max_time={'hours': 24},
+        max_time={'hours': 4},
         
         # max_time={'minutes': 5},
         # max_steps=0,
@@ -299,7 +345,7 @@ if __name__ == "__main__":
     # do magic!
     trainer.fit(
         learner, train_loader, val_loader,
-        # ckpt_path='/home/alekseev_ilya/dialogue-augmentation/nup/logs/training/listwise-kldiv-3-finetune-layers-non-periodic/checkpoints/last.ckpt'
+        # ckpt_path='/home/alekseev_ilya/dialogue-augmentation/nup/logs/training/listwise-best/checkpoints/last.ckpt'
     )
 
     print('Finished at', datetime.now().strftime("%H:%M:%S %d-%m-%Y"))

@@ -16,7 +16,7 @@ class RankerHead(nn.Module, HParamsPuller):
         self.ranker = nn.Linear(hidden_size, 1, bias=False)
     
     def forward(self, x: torch.Tensor):
-        x = self.lin(x) + x
+        x = F.gelu(self.lin(x)) + x
         x = self.dropout(x)
         x = self.ranker(x)
         return x.squeeze(-1)
@@ -89,7 +89,7 @@ class ContrasterHead(nn.Module, HParamsPuller):
         
     def forward(self, x):
         # x: (B, T, H)
-        x = self.lin(self.drop(x)) + x
+        x = F.gelu(self.lin(self.drop(x))) + x
         x = torch.nn.functional.normalize(x, dim=2)
         return x
 
@@ -191,4 +191,102 @@ class UtteranceSorter(nn.Module, LightningCkptLoadable, HParamsPuller):
         dia_lens_expanded = torch.tensor(dia_lens, device=device)[:, None]
         max_dia_len_expanded = torch.arange(T, device=device)[None, :]
         return dia_lens_expanded <= max_dia_len_expanded
+    
+
+class ClfRankerHead(nn.Module, HParamsPuller):
+    def __init__(self, hidden_size, n_classes, dropout_prob):
+        super().__init__()
+
+        self.lin = nn.Linear(hidden_size, hidden_size)
+        self.dropout = nn.Dropout(dropout_prob)
+        self.clf = nn.Linear(hidden_size, n_classes)
+    
+    def forward(self, x: torch.Tensor):
+        x = F.gelu(self.lin(x)) + x
+        x = self.dropout(x)
+        x = self.clf(x)
+        return x
+
+
+class ClfSortingLoss(nn.Module):
+    def __init__(self):
+        super().__init__()
+
+        self.loss_fn = nn.CrossEntropyLoss(reduction='none')
+    
+    def forward(self, logits, mask, dia_lens):
+        """
+        logits: (B, T, C)
+        mask: (B, T), mask indicating padding utterances
+        """
+        device = logits.device
+
+        for i, length in enumerate(dia_lens):
+            logits[i, :, length:] = -1e4
+
+        B, T, C = logits.shape
+        logits = logits.view(-1, C)
+        labels = self._make_true_labels(B, T, device)
+        dirty_loss = self.loss_fn(logits, labels)
+        mask = mask.view(-1)
+        loss = dirty_loss[~mask].mean()
+        return loss
+    
+    @staticmethod
+    def _make_true_labels(B, T, device):
+        return torch.arange(T, device=device)[None, :].expand(B, T).reshape(-1)
+
+
+class ClfSortingMetric(SortingMetric):
+    def __call__(self, probs_logits, mask, dia_lens):
+        labs = torch.argmax(probs_logits, dim=-1)
+        ranks = -labs
+
+        return super().__call__(ranks, mask, dia_lens)
+
+
+class ClfUtteranceSorter(nn.Module, LightningCkptLoadable, HParamsPuller):
+    def __init__(self, dialogue_model, dropout_prob, max_n_uts):
+        super().__init__()
+
+        self.dialogue_model = dialogue_model
+        self.dropout_prob = dropout_prob
+        self.max_n_uts = max_n_uts
+        
+        self.clf_head = ClfRankerHead(dialogue_model.get_hidden_size(), max_n_uts, dropout_prob)
+        self.sorting_loss = ClfSortingLoss()
+        self.metric_fn = ClfSortingMetric()
+
+    @property
+    def device(self):
+        return self.dialogue_model.device
+
+    def get_logits(self, batch):
+        hidden_states = self.dialogue_model(batch)
+        return self.clf_head(hidden_states)
+
+    def forward(self, batch):
+        device = self.device
+        dia_lens = [len(dia) for dia in batch]
+
+        # (B, T, C), where C is the # of max uts in dia
+        probs_logits = self.get_logits(batch)
+        mask = UtteranceSorter._make_mask(dia_lens, device)
+
+        loss = self.sorting_loss(probs_logits, mask, dia_lens)
+        metric = self.metric_fn(probs_logits, mask, dia_lens)
+
+        return loss, metric
+
+    @torch.no_grad()
+    def augment(self, batch):
+        device = self.device
+        dia_lens = [len(dia) for dia in batch]
+
+        ranks_logits = self.get_logits(batch)
+        mask = self._make_mask(dia_lens, device)
+        unbinded_ranks_logits = self.metric_fn._unbind_logits(ranks_logits, mask, dia_lens)
+        permutations = self.metric_fn._to_permutations(unbinded_ranks_logits)
+
+        return [[dia[i] for i in perm] for dia, perm in zip(batch, permutations)]
     
