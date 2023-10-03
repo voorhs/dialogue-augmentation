@@ -10,7 +10,7 @@ if __name__ == "__main__":
     ap.add_argument('--model', dest='model', required=True, choices=[
         'pairwise-cat', 'pairwise-ema', 'pairwise-sparse-transformer',
         'listwise-utterance-transformer', 'listwise-sparse-transformer',
-        'listwise-hssa', 'listwise-clf'
+        'listwise-hssa', 'listwise-clf', 'listwise-decoder', 'pairwise-cat-decoupled'
     ])
     ap.add_argument('--name', dest='name', default=None)
     ap.add_argument('--cuda', dest='cuda', default='0')
@@ -51,11 +51,11 @@ if __name__ == "__main__":
     from models.aux import mySentenceTransformer
     from models.pairwise import TargetEncoder, ContextEncoderConcat, ContextEncoderEMA, ContextEncoderDM, ChainCosine
     from models.dialogue import UtteranceTransformerDM, UtteranceTransformerDMConfig, SparseTransformerDM, HSSAConfig, HSSADM
-    from models.listwise import UtteranceSorter, ClfUtteranceSorter
+    from models.listwise import UtteranceSorter, ClfUtteranceSorter, Decoder, DecoderUtteranceSorter
 
     if args.model == 'pairwise-cat':
         context_size = 3
-        finetune_encoder_layers = 1
+        finetune_encoder_layers = 3
         encoder_name = 'aws-ai/dse-bert-large'
         k = 5
         temperature = 0.05
@@ -68,7 +68,7 @@ if __name__ == "__main__":
         model = ChainCosine(
             target_encoder=target_encoder,
             context_encoder=context_encoder,
-            projection_size=512,
+            projection_size=256,
             context_size=context_size,
             k=k,
             temperature=temperature,
@@ -83,6 +83,44 @@ if __name__ == "__main__":
                 'finetune_encoder_layers': finetune_encoder_layers,
             }
         )
+    elif args.model == 'pairwise-cat-decoupled':
+        context_size = 3
+        encoder_name = 'aws-ai/dse-bert-large'
+        finetune_encoder_layers = 1
+
+        _encoder = mySentenceTransformer(encoder_name)
+        _target_encoder = TargetEncoder(_encoder)
+        _context_encoder = ContextEncoderConcat(_encoder, context_size=context_size)
+        _model = ChainCosine(
+            target_encoder=_target_encoder,
+            context_encoder=_context_encoder,
+            projection_size=512,
+            context_size=context_size,
+        )
+
+        model = ChainCosine.from_checkpoint(
+            path_to_ckpt='/home/alekseev_ilya/dialogue-augmentation/nup/logs/training/pairwise-best-resumed/checkpoints/last.ckpt',
+            model=_model,
+            map_location='cuda'
+        )
+
+        encoder_for_target = mySentenceTransformer(encoder_name)
+        encoder_for_target.load_state_dict(model.target_encoder.sentence_encoder.state_dict())
+        model.target_encoder.sentence_encoder = encoder_for_target
+
+        freeze_hf_model(model.target_encoder.sentence_encoder.model, finetune_encoder_layers)
+        freeze_hf_model(model.context_encoder.sentence_encoder.model, finetune_encoder_layers)
+
+        learner_config = LearnerConfig(
+            batch_size=128,
+            # warmup_period=None,
+            # do_periodic_warmup=None,
+            lr=7e-6,
+            kwargs={
+                'finetune_encoder_layers': finetune_encoder_layers,
+            }
+        )
+
     elif args.model == 'pairwise-ema':
         context_size = 3
         finetune_encoder_layers = 2
@@ -241,7 +279,7 @@ if __name__ == "__main__":
         del _model
         del _dialogue_model
 
-        finetune_encoder_layers = 0
+        finetune_encoder_layers = 3
         dialogue_model = _model2.dialogue_model
         freeze_hf_model(dialogue_model.encoder.model, finetune_encoder_layers)
         
@@ -249,6 +287,52 @@ if __name__ == "__main__":
             dialogue_model=dialogue_model,
             dropout_prob=head_dropout_prob,
             max_n_uts=20
+        )
+        learner_config = LearnerConfig(
+            batch_size=192,
+            warmup_period=200,
+            do_periodic_warmup=False,
+            lr=3e-6,
+            kwargs={
+                'finetune_encoder_layers': finetune_encoder_layers,
+            }
+        )
+    elif args.model == 'listwise-decoder':
+        head_dropout_prob = 0.02
+        encoder_name = mpnet_name
+        config = UtteranceTransformerDMConfig(
+            num_attention_heads=4,
+            attention_probs_dropout_prob=0.02,
+            n_layers=4,
+            encoder_name=encoder_name,
+            embed_turn_ids=False,
+            is_casual=False
+        )
+        _dialogue_model = UtteranceTransformerDM(config)
+        
+        _model = UtteranceSorter(
+            dialogue_model=_dialogue_model,
+            dropout_prob=head_dropout_prob
+        )
+
+        _model2 = UtteranceSorter.from_checkpoint(
+            path_to_ckpt='/home/alekseev_ilya/dialogue-augmentation/nup/logs/training/listwise-best/checkpoints/last.ckpt',
+            model=_model,
+            map_location='cuda'
+        )
+        del _model
+        del _dialogue_model
+
+        finetune_encoder_layers = 3
+        dialogue_model = _model2.dialogue_model
+        freeze_hf_model(dialogue_model.encoder.model, finetune_encoder_layers)
+        
+        decoder = Decoder()
+        model = DecoderUtteranceSorter(
+            dialogue_model=dialogue_model,
+            dropout_prob=head_dropout_prob,
+            max_n_uts=20,
+            decoder=decoder
         )
         learner_config = LearnerConfig(
             batch_size=192,
@@ -310,9 +394,9 @@ if __name__ == "__main__":
 
     trainer = pl.Trainer(
         # max_epochs=1,
-        max_time={'hours': 4},
+        max_time={'hours': 24},
         
-        # max_time={'minutes': 5},
+        # max_time={'minutes': 10},
         # max_steps=0,
 
         # hardware settings
@@ -345,7 +429,7 @@ if __name__ == "__main__":
     # do magic!
     trainer.fit(
         learner, train_loader, val_loader,
-        # ckpt_path='/home/alekseev_ilya/dialogue-augmentation/nup/logs/training/listwise-best/checkpoints/last.ckpt'
+        # ckpt_path='/home/alekseev_ilya/dialogue-augmentation/nup/logs/training/listwise-clf/checkpoints/last.ckpt'
     )
 
     print('Finished at', datetime.now().strftime("%H:%M:%S %d-%m-%Y"))

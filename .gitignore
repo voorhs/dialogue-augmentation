@@ -1,6 +1,8 @@
 VENV/
+VENV2/
 nup/dialogues
 nup/pairs
 logs
 *__pycache__*
 *-data
+.*

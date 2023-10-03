@@ -129,34 +129,40 @@ class TargetEncoder(nn.Module, HParamsPuller):
 
 
 class ContextEncoderConcat(nn.Module, HParamsPuller):
-    def __init__(self, sentence_encoder: mySentenceTransformer, context_size):
+    def __init__(self, sentence_encoder: mySentenceTransformer, context_size, n_speakers=2, speaker_embedding_dim=8):
         super().__init__()
 
         self.sentence_encoder = sentence_encoder
         self.context_size = context_size
+        self.speaker_embedding_dim = speaker_embedding_dim
+
+        self.speaker_embedding = nn.Embedding(n_speakers, speaker_embedding_dim)
 
     def forward(self, batch):
         uts = []
         lens = []
+        spe = []
         for dia in batch:
             cur_uts = [item['utterance'] for item in dia]
+            spe.append(dia[-1]['speaker'])
             uts.extend(cur_uts)
             lens.append(len(cur_uts))
         
         sentence_embeddings = self.sentence_encoder(uts)
+        speaker_embeddings = self.speaker_embedding(torch.tensor(spe, dtype=torch.int, device=sentence_embeddings[0].device))
         d = self.sentence_encoder.get_sentence_embedding_size()
         res = []
         for i in range(len(batch)):
             start = sum(lens[:i])
             end = start + lens[i]
             n_zeros_to_pad = (self.context_size - lens[i]) * d
-            enc = F.pad(torch.cat(sentence_embeddings[start:end]), pad=(n_zeros_to_pad, 0), value=0)
+            enc = F.pad(torch.cat(sentence_embeddings[start:end] + [speaker_embeddings[i]]), pad=(n_zeros_to_pad, 0), value=0)
             res.append(enc)
         
         return res
 
     def get_encoding_size(self):
-        return self.sentence_encoder.get_sentence_embedding_size() * self.context_size
+        return self.sentence_encoder.get_sentence_embedding_size() * self.context_size + self.speaker_embedding_dim
 
 
 class ContextEncoderEMA(nn.Module, HParamsPuller):

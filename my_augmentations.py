@@ -6,7 +6,6 @@ from nltk.corpus import stopwords
 from transformers import AutoTokenizer, pipeline
 from typing import List, Literal
 
-
 class BackTranslator:
     """Back Translate each utterance (separately). Preserves intent."""
 
@@ -765,7 +764,9 @@ Specific input:
 
 from nup.models.dialogue import UtteranceTransformerDMConfig, UtteranceTransformerDM
 from nup.models.listwise import UtteranceSorter
+import torch
 
+@torch.no_grad()
 class ListwiseShuffler:
     def __init__(
             self,
@@ -798,6 +799,66 @@ class ListwiseShuffler:
         aug_dialogues = self.model.augment(dialogues)
         json.dump(aug_dialogues, open(f'aug-data/{name}.json', 'w'))
 
+
+from nup.models.pairwise import ChainCosine, TargetEncoder, ContextEncoderConcat
+from nup.models.aux import mySentenceTransformer
+import torch.nn.functional as F
+from collections import defaultdict
+
+@torch.no_grad()
+class PairwiseShuffler:
+    def __init__(self, ckpt_path, device):
+        context_size = 3
+        encoder_name = 'aws-ai/dse-bert-large'
+
+        _encoder = mySentenceTransformer(encoder_name)
+        _target_encoder = TargetEncoder(_encoder)
+        _context_encoder = ContextEncoderConcat(_encoder, context_size=context_size)
+        _model = ChainCosine(
+            target_encoder=_target_encoder,
+            context_encoder=_context_encoder,
+            projection_size=512,
+            context_size=context_size,
+        )
+
+        self.model = ChainCosine.from_checkpoint(
+            path_to_ckpt='/home/alekseev_ilya/dialogue-augmentation/nup/logs/training/pairwise-best-resumed/checkpoints/last.ckpt',
+            model=_model,
+            map_location='cuda'
+        ).eval()
+
+    def from_file_system(self, name):
+        dialogues = json.load(open('aug-data/original.json', 'r'))
+
+        t = 0.1
+        df_scores = defaultdict(list)
+
+        for i_dia, dia in enumerate(dialogues):
+            batch = self.model.make_batch_from_dia(dia)
+            logits = self.model.get_logits(batch, temperature=t)
+            scores = self._get_score(logits)
+            thresh = np.percentile(scores, 0.1)
+            pass
+
+
+
+
+    def _get_score(logits, absolute=False, reduction='none'):
+        if absolute:
+            scores = logits.diag()
+        else:
+            scores = F.softmax(logits, dim=1).diag().log10()
+        if reduction == 'mean':
+            score = scores.mean()
+        elif reduction == 'min':
+            score = scores.min()
+        elif reduction == 'max':
+            score = scores.max()
+        elif reduction != 'none':
+            raise ValueError('unexpected reduction type')
+        else:
+            return scores.cpu().numpy()
+        return score.cpu().item()
 
 if __name__ == "__main__":
 

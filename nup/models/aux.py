@@ -72,7 +72,7 @@ class Projector(nn.Module):
             x = torch.stack(x)
         else:
             x = x.to(torch.float32)
-        x = x.cuda()
+        # x = x.cuda()
         x = x + F.gelu(self.linear_1(self.norm1(x)))
         x = x + F.gelu(self.linear_2(self.norm2(x)))
 
