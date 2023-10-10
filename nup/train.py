@@ -10,7 +10,8 @@ if __name__ == "__main__":
     ap.add_argument('--model', dest='model', required=True, choices=[
         'pairwise-cat', 'pairwise-ema', 'pairwise-sparse-transformer',
         'listwise-utterance-transformer', 'listwise-sparse-transformer',
-        'listwise-hssa', 'listwise-clf', 'listwise-decoder', 'pairwise-cat-decoupled'
+        'listwise-hssa', 'listwise-clf', 'listwise-decoder', 'pairwise-cat-decoupled',
+        'pairwise-ema-both'
     ])
     ap.add_argument('--name', dest='name', default=None)
     ap.add_argument('--cuda', dest='cuda', default='0')
@@ -49,7 +50,7 @@ if __name__ == "__main__":
     from models.train_utils import Learner, LearnerConfig
 
     from models.aux import mySentenceTransformer
-    from models.pairwise import TargetEncoder, ContextEncoderConcat, ContextEncoderEMA, ContextEncoderDM, ChainCosine
+    from models.pairwise import TargetEncoder, ContextEncoderConcat, ContextEncoderEMA, ContextEncoderDM, ChainCosine, ChainCosine2
     from models.dialogue import UtteranceTransformerDM, UtteranceTransformerDMConfig, SparseTransformerDM, HSSAConfig, HSSADM
     from models.listwise import UtteranceSorter, ClfUtteranceSorter, Decoder, DecoderUtteranceSorter
 
@@ -120,7 +121,37 @@ if __name__ == "__main__":
                 'finetune_encoder_layers': finetune_encoder_layers,
             }
         )
+    elif args.model == 'pairwise-ema-both':
+        context_size = 2
+        finetune_encoder_layers = 2
+        tau = 0.5
+        encoder_name = amazon_name
+        k = 1
+        temperature = 0.05
+        hard_negative = False
 
+        encoder = mySentenceTransformer(encoder_name)
+        freeze_hf_model(encoder.model, finetune_encoder_layers)
+        target_encoder = ContextEncoderEMA(encoder, context_size=context_size, tau=tau)
+        context_encoder = ContextEncoderEMA(encoder, context_size=context_size, tau=tau)
+        model = ChainCosine2(
+            target_encoder=target_encoder,
+            context_encoder=context_encoder,
+            projection_size=256,
+            context_size=context_size,
+            k=k,
+            temperature=temperature,
+            hard_negative=hard_negative
+        )
+        learner_config = LearnerConfig(
+            batch_size=128,
+            # warmup_period=None,
+            # do_periodic_warmup=None,
+            lr=3e-5,
+            kwargs={
+                'finetune_encoder_layers': finetune_encoder_layers,
+            }
+        )
     elif args.model == 'pairwise-ema':
         context_size = 3
         finetune_encoder_layers = 2

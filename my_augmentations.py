@@ -804,6 +804,8 @@ from nup.models.pairwise import ChainCosine, TargetEncoder, ContextEncoderConcat
 from nup.models.aux import mySentenceTransformer
 import torch.nn.functional as F
 from collections import defaultdict
+from sklearn.cluster import AgglomerativeClustering
+
 
 @torch.no_grad()
 class PairwiseShuffler:
@@ -830,16 +832,27 @@ class PairwiseShuffler:
     def from_file_system(self, name):
         dialogues = json.load(open('aug-data/original.json', 'r'))
 
-        t = 0.1
         df_scores = defaultdict(list)
-
+            
         for i_dia, dia in enumerate(dialogues):
-            batch = self.model.make_batch_from_dia(dia)
-            logits = self.model.get_logits(batch, temperature=t)
-            scores = self._get_score(logits)
-            thresh = np.percentile(scores, 0.1)
-            pass
+            with torch.no_grad():
+                batch = self.model.make_batch_from_dia(dia)
+                similarities = self.model.get_logits(batch, temperature=1).cpu().numpy()
+                
+                # mask out similarities between utterances of same speaker
+                # speaker = [item['speaker'] for item in dia]
+                # context_speaker = np.array(speaker[:-1])[:, None]
+                # target_speaker = np.array(speaker[1:])[None, :]
+                # mask = (context_speaker != target_speaker) | np.eye(len(speaker)-1, dtype=np.bool_)
+                # similarities[~mask] = -1e3
 
+                labels = AgglomerativeClustering(
+                    n_clusters=len(dia) // 4,
+                    linkage='average',
+                    metric='precomputed'
+                ).fit_predict(similarities)
+
+                raise NotImplementedError()
 
 
 

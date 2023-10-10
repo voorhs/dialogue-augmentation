@@ -80,73 +80,16 @@ class SortingMetric:
         return ans / max_inversions
 
 
-class ContrasterHead(nn.Module, HParamsPuller):
-    def __init__(self, hidden_size, dropout_prob):
-        super().__init__()
-        
-        self.hidden_size = hidden_size
-        self.dropout_prob = dropout_prob
-
-        self.drop = nn.Dropout(dropout_prob)
-        self.lin = nn.Linear(hidden_size, hidden_size)
-        
-    def forward(self, x):
-        # x: (B, T, H)
-        x = F.gelu(self.lin(self.drop(x))) + x
-        x = torch.nn.functional.normalize(x, dim=2)
-        return x
-
-
-class PairingLoss(nn.Module, HParamsPuller):
-    def __init__(self, reduction: Literal['mean', 'sum', 'none'] = 'mean'):
-        super().__init__()
-        self.reduction = reduction
-
-    def forward(self, hidden_states, mask, dia_lens):
-        B, T, H = hidden_states.shape
-        device = hidden_states.device
-        
-        context_indexes = torch.arange(T-1)
-        target_indexes = torch.arange(1, T)
-        pos_scores = torch.zeros_like(hidden_states)
-        tmp = hidden_states[:, context_indexes, :] * hidden_states[:, target_indexes, :]
-        pos_scores[:, context_indexes, :] += tmp
-        pos_scores[:, target_indexes, :] += tmp
-        
-        mask2 = mask.clone()
-        dia_lens_expanded = torch.tensor(dia_lens, device=device)
-        mask2[torch.arange(B, device=device), dia_lens_expanded-1] = True
-        pos_scores = pos_scores.sum(dim=2).masked_fill(mask2, -1e4).exp().masked_select(~mask2)
-
-        hidden_states = hidden_states.view(-1, H)
-        all_scores = hidden_states @ hidden_states.T
-        
-        mask3 = mask.view(1, -1) & torch.eye(B*T).bool().to(device)
-        neg_scores = all_scores.masked_fill(mask3, -1e4).exp().sum(dim=1).masked_select(~mask2.view(-1))
-
-        loss = pos_scores.div(neg_scores).log().neg()
-        if self.reduction == 'mean':
-            loss = loss.mean()
-        elif self.reduction == 'mean':
-            loss = loss.sum()
-        return loss
-
-
 class UtteranceSorter(nn.Module, LightningCkptLoadable, HParamsPuller):
-    def __init__(self, dialogue_model, dropout_prob, with_contrastive=False):
+    def __init__(self, dialogue_model, dropout_prob):
         super().__init__()
 
         self.dialogue_model = dialogue_model
         self.dropout_prob = dropout_prob
-        self.with_contrastive = with_contrastive
         
         self.ranker_head = RankerHead(dialogue_model.get_hidden_size(), dropout_prob)
         self.sorting_loss = SortingLoss()
         self.metric_fn = SortingMetric()
-        
-        if self.with_contrastive:
-            self.contraster_head = ContrasterHead(dialogue_model.get_hidden_size(), dropout_prob)
-            self.pairing_loss = PairingLoss()
 
     @property
     def device(self):
@@ -345,7 +288,7 @@ class DecoderSortingLoss(nn.Module):
         mask = mask.reshape(-1)
         logits = logits.transpose(1, 2).reshape(-1, T)[~mask]
         labels = self._make_true_labels(dia_lens, device)
-        loss = self.loss_fn(logits, labels)
+        loss = self.loss_fn(logits, labels) #! add temperature
 
         return loss
     
@@ -376,6 +319,9 @@ class DecoderSortingMetric:
         return res
     
 
+from scipy.special import log_softmax
+
+
 class Decoder:
     def __init__(self, top_k=0, top_p=0., beams=0):
         self.top_k = top_k
@@ -385,7 +331,7 @@ class Decoder:
     def __call__(self, unbinded_logits):
         device = unbinded_logits[0].device
         if self.beams != 0:
-            raise NotImplementedError('beam search is not implemented yet')
+            permutations = Decoder._beam_decode(unbinded_logits, self.beams)
         else:
             permutations = Decoder._sampling_decode(unbinded_logits, device, self.top_k, self.top_p)
         
@@ -410,6 +356,34 @@ class Decoder:
                 not_selected.remove(i_selected)
             res.append(perm)
         return res
+    
+    @staticmethod
+    def _beam_decode(unbinded_logits, beams):
+        # unbinded logits: list of (T, C)
+        return [Decoder._beam_search(logits.T.cpu().numpy(), perm=[], score=0, beams=beams)[0][0] for logits in unbinded_logits]
+        
+    @staticmethod
+    def _beam_search(logits, perm, score, beams):
+        # logits: tensor of (C, T)
+        
+        C, T = logits.shape
+        cur_pos = len(perm)
+        if cur_pos == min(C, T):
+            return [(perm, score)]
+        
+        cur_logits = logits[cur_pos]
+        cur_logits[perm] = -1e4
+        all_scores = score + log_softmax(cur_logits)
+        top_scorers = np.argpartition(all_scores, kth=-beams)[-beams:]
+        all_res = []
+        for i in top_scorers:
+            cur_perm = perm + [i]
+            cur_score = all_scores[i]
+            all_res.extend(Decoder._beam_search(logits, cur_perm, cur_score, beams))
+        
+        all_res = sorted(all_res, key=lambda x: x[1], reverse=True)
+        
+        return all_res[:beams]
     
     @staticmethod
     def _top_filtering(logits, top_k, top_p, filter_value=-torch.inf):
@@ -442,15 +416,17 @@ class Decoder:
 
 
 class DecoderUtteranceSorter(ClfUtteranceSorter):
-    def __init__(self, dialogue_model, dropout_prob, max_n_uts, decoder):
+    def __init__(self, dialogue_model, dropout_prob, max_n_uts, decoder, temperature=0.1):
         super().__init__(dialogue_model, dropout_prob, max_n_uts)
 
         self.dialogue_model = dialogue_model
         self.dropout_prob = dropout_prob
         self.max_n_uts = max_n_uts
+        self.temperature = temperature
         
         self.clf_head = ClfRankerHead(dialogue_model.get_hidden_size(), max_n_uts, dropout_prob)
-        self.sorting_loss = DecoderSortingLoss()
+        self.sorting_loss_clf = ClfSortingLoss()
+        self.sorting_loss_dec = DecoderSortingLoss()
         self.metric_fn = DecoderSortingMetric(decoder)
 
     @property
@@ -468,12 +444,16 @@ class DecoderUtteranceSorter(ClfUtteranceSorter):
         if max(dia_lens) > self.max_n_uts:
             raise ValueError('theres a dialogue with exceeding utterances count')
         # (B, T, C), where C is the # of max uts in dia
-        probs_logits = self.get_logits(batch)
+        probs_logits = self.get_logits(batch) / self.temperature
         mask = UtteranceSorter._make_mask(dia_lens, device)
+        loss_1 = self.sorting_loss_clf(probs_logits, mask, dia_lens)
+        
         T = max(dia_lens)
         mask = F.pad(mask, pad=(0, self.max_n_uts-T, 0,0), value=True)
 
-        loss = self.sorting_loss(probs_logits, mask, dia_lens)
+        loss_2 = self.sorting_loss_dec(probs_logits, mask, dia_lens)
         metric = self.metric_fn(probs_logits, dia_lens)
+
+        loss = (loss_1 + loss_2) / 2
 
         return loss, metric

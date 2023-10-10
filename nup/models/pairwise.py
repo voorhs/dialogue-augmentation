@@ -83,11 +83,9 @@ class ChainCosine(nn.Module, LightningCkptLoadable, HParamsPuller):
         return loss, topk_accuracy
 
     @torch.no_grad()
-    def score(self, dialogue, temperature=None):
+    def score(self, dialogue, temperature=1):
         batch = self.make_batch_from_dia(dialogue)
-        if temperature is None:
-            temperature = self.temperature
-        logits = self.get_logits(batch, self.temperature)
+        logits = self.get_logits(batch, temperature)
         return F.softmax(logits, dim=1).diag().log10().mean().cpu().item()
     
     @staticmethod
@@ -229,3 +227,34 @@ class ContextEncoderDM(nn.Module, HParamsPuller):
 
     def get_encoding_size(self):
         return 2 * self.dialogue_model.model.config.hidden_size
+
+
+class ChainCosine2(ChainCosine):
+    def get_encodings(self, batch):
+        context_slice = slice(-self.context_size, None, None)
+        target_slice = slice(-self.context_size+1, None, None)
+
+        context_batch = []
+        target_batch = []
+        for pair in batch:
+            context_batch.append(pair['context'][context_slice])
+            target_batch.append(pair['context'][target_slice] + [pair['target']])
+        
+        target_encodings = self.target_encoder(target_batch)
+        context_encodings = self.context_encoder(context_batch)
+
+        context_encodings = self.context_projector(context_encodings)
+        target_encodings = self.target_projector(target_encodings)
+
+        return context_encodings, target_encodings
+    
+    @staticmethod
+    def make_batch_from_dia(dialogue):
+        batch = []
+        for i in range(1, len(dialogue)):
+            batch.append({
+                'context': dialogue[:i],
+                'target': dialogue[i]
+            })
+        return batch
+   
