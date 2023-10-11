@@ -231,7 +231,7 @@ class ClfUtteranceSorter(nn.Module, LightningCkptLoadable, HParamsPuller):
         return [dia]
 
     @torch.no_grad()
-    def score(self, dia=None, batch=None):
+    def score(self, dia=None, batch=None, return_logits=False):
         if bool(dia) == bool(batch):
             raise ValueError('either dia or batch should be provided')
         if dia is not None:
@@ -241,29 +241,27 @@ class ClfUtteranceSorter(nn.Module, LightningCkptLoadable, HParamsPuller):
         probs_logits = self.get_logits(batch)
         
         dia_lens = [len(dia) for dia in batch]
-        for i, length in enumerate(dia_lens):
-            probs_logits[i, :, length:] = -1e4
-        probs = F.softmax(probs_logits, dim=-1)
+        unbinded_logits = DecoderSortingMetric._unbind_logits(probs_logits, dia_lens)
         
         res_non_reducted = []
         res_geo_mean = []
         res_arith_mean = []
-        for i, length in enumerate(dia_lens):
-            indices = torch.arange(length, device=self.device)
-            logits = probs[i, indices, indices]
+        for logits in unbinded_logits:
+            probs = F.softmax(logits, dim=1)
+            logits = probs.diag()
             res_non_reducted.append(logits.cpu().numpy())
             res_geo_mean.append(logits.log().mean().exp().cpu().item())
             res_arith_mean.append(logits.mean().cpu().item())
 
+        if return_logits:
+            return unbinded_logits, res_non_reducted, res_geo_mean, res_arith_mean
         return res_non_reducted, res_geo_mean, res_arith_mean
     
     @torch.no_grad()
     def augment(self, batch, decoder):
-        logits = self.get_logits(batch)
-        dia_lens = [len(dia) for dia in batch]
-        unbinded_logits = DecoderSortingMetric._unbind_logits(logits, dia_lens)
+        unbinded_logits, _, _, scores = self.score(batch=batch, return_logits=True)
         permutations = decoder(unbinded_logits)
-        return [[dia[i] for i in perm] for perm, dia in zip(permutations, batch)]
+        return [([dia[i] for i in perm], score) for perm, dia, score in zip(permutations, batch, scores)]
 
 
 # ======= decoder =======

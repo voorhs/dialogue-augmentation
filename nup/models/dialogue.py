@@ -7,6 +7,7 @@ from transformers import AutoModel, AutoTokenizer
 from transformers.models.mpnet.modeling_mpnet import create_position_ids_from_input_ids
 from collections import defaultdict
 from .train_utils import HParamsPuller
+from typing import Literal
 
 
 @dataclass
@@ -110,8 +111,23 @@ class SparseTransformerDM(nn.Module, HParamsPuller):
     def device(self):
         return self.model.device
     
-    def _tokenize(self, batch, device, padding_idx=1):  # padding_idx that is used in MPNet
-        # group utterances by turns in order to tokenize and pad them jointly
+    def _tokenize(self, batch, device):
+        input_ids, uts_grouped_by_turn_tokenized, max_ut_lens = self._group_uts(batch)
+        extended_attention_mask = self._extended_att_mask(
+            len(batch),
+            uts_grouped_by_turn_tokenized,
+            max_ut_lens
+        )
+        position_ids = self._position_ids(uts_grouped_by_turn_tokenized)
+        return {
+            "input_ids": input_ids.to(device),
+            "attention_mask": extended_attention_mask.to(device),
+            "position_ids": position_ids.to(device)
+        }
+
+    @staticmethod
+    def _group_uts(tokenizer, batch):
+        """group utterances by turns in order to tokenize and pad them jointly"""
         uts_grouped_by_turn = defaultdict(list)
         max_n_utterances = max(len(dia) for dia in batch)
 
@@ -122,45 +138,53 @@ class SparseTransformerDM(nn.Module, HParamsPuller):
                 uts_grouped_by_turn[i].append('')
 
         uts_grouped_by_turn_tokenized = [None for _ in range(max_n_utterances)]
-        uts_lens = [None for _ in range(max_n_utterances)]
+        max_ut_lens = [None for _ in range(max_n_utterances)]
         for i, uts in uts_grouped_by_turn.items():
-            tokens = self.tokenizer(uts, padding='longest', return_tensors='pt')
+            tokens = tokenizer(uts, padding='longest', return_tensors='pt')
             uts_grouped_by_turn_tokenized[i] = tokens
-            uts_lens[i] = tokens['input_ids'].shape[1]
-        
+            max_ut_lens[i] = tokens['input_ids'].shape[1]
+    
+        # (N_uts, T)
         input_ids = torch.cat([group['input_ids'] for group in uts_grouped_by_turn_tokenized], dim=1)
+        return input_ids, uts_grouped_by_turn_tokenized, max_ut_lens
 
-        # make extended attention mask of size (B, T, T)
+    @staticmethod
+    def _extended_att_mask(
+            batch_size,
+            uts_grouped_by_turn_tokenized,
+            max_ut_lens
+        ):
+        """mask of size (B, T, T)"""
         attention_mask = []
-        for i in range(len(batch)):
+        for i in range(batch_size):
             masks_per_utterance = []
             for j, group in enumerate(uts_grouped_by_turn_tokenized):
                 mask = group['attention_mask'][i]
-                T = uts_lens[j]
+                T = max_ut_lens[j]
                 masks_per_utterance.append(mask[None, :].expand(T, T))
             attention_mask.append(torch.block_diag(*masks_per_utterance))
         attention_mask = torch.stack(attention_mask, dim=0)
         
         # allow CLS tokens attend to each other
-        extended_attention_mask = attention_mask
-        for i in range(len(uts_lens)):
-            cls_idx = sum(uts_lens[:i])
-            extended_attention_mask[:, :, cls_idx] = 1
-        
-        # assign positions within each utterance
+        res = attention_mask
+        for i in range(len(max_ut_lens)):
+            cls_idx = sum(max_ut_lens[:i])
+            res[:, :, cls_idx] = 1
+        return res
+
+    @staticmethod
+    def _position_ids(
+            uts_grouped_by_turn_tokenized,
+            padding_idx=1   # padding_idx that is used in MPNet
+        ): 
+        """assign positions within each utterance"""
         position_ids = []
         for group in uts_grouped_by_turn_tokenized:
             ids = create_position_ids_from_input_ids(group['input_ids'], padding_idx=padding_idx)
             position_ids.append(ids)
         position_ids = torch.cat(position_ids, dim=1)
         
-        inputs = {
-            "input_ids": input_ids.to(device),
-            "attention_mask": extended_attention_mask.to(device),
-            "position_ids": position_ids.to(device)
-        }
-        
-        return inputs, uts_lens
+        return position_ids
     
     def forward(self, batch):
         device = self.device
@@ -184,13 +208,17 @@ class SparseTransformerDM(nn.Module, HParamsPuller):
 
 
 class HSSADM(nn.Module):
-    def __init__(self, hf_model_name, config: HSSAConfig):
+    def __init__(self, hf_model_name, config: HSSAConfig, pool_utterance_level=False, pool_dialogue_level=False):
         super().__init__()
 
         self.hf_model_name = hf_model_name
         self.config = config
 
-        config.pool_utterances = True
+        if pool_dialogue_level and pool_utterance_level:
+            raise ValueError('either dialogue or utterance encodings can be demanded')
+        self.pool_dialogue_level = pool_dialogue_level
+        self.pool_utterance_level = pool_utterance_level
+
         self.model = HSSAModel.from_pretrained(hf_model_name, config=config)
         self.tokenizer = HSSATokenizer.from_pretrained(hf_model_name)
         self.model.resize_token_embeddings(len(self.tokenizer))
@@ -200,8 +228,28 @@ class HSSADM(nn.Module):
         return self.model.device
 
     def forward(self, batch):
+        """
+        returned shape:
+
+        - without pooling: (B, T, S, H) --- each token for each utterance for each dia in batch
+        - pool_utterance_level: (B, T, H) --- each utterance for each dia in batch
+        - pool_dialogue_level: (B, H) --- each dia
+        """
+        if self.pool_dialogue_level:
+            # add cls utterance
+            batch = [[{'speaker': None, 'utterance': ''}] + dia for dia in batch]
+        
         tokenized = self.tokenizer(batch).to(self.device)
+        # (B, T, S, H)
         hidden_states = self.model(**tokenized)
+        
+        if self.pool_dialogue_level:
+            # cls token of entire dialogue
+            hidden_states = hidden_states[:, 0, 0, :]
+        elif self.pool_utterance_level:
+            # cls tokens of utterances
+            hidden_states = hidden_states[:, :, 0, :]
+        
         return hidden_states
     
     def get_hidden_size(self):
@@ -211,3 +259,36 @@ class HSSADM(nn.Module):
         res = self.config.to_dict()
         res['hf_model_name'] = self.hf_model_name
         return res
+
+
+#! add sliding window feature? or just use xlnet?
+class SimpleDialogueEncoder(nn.Module):
+    def __init__(self, hf_model_name):
+        super().__init__()
+
+        self.hf_model_name = hf_model_name
+
+        self.model = AutoModel.from_pretrained(hf_model_name)
+        self.tokenizer = AutoTokenizer.from_pretrained(hf_model_name)
+
+    @property
+    def device(self):
+        return self.model.device
+
+    @staticmethod
+    def _parse(dia):
+        return [f'[{item["speaker"]}] {item["utterance"]}' for item in dia]
+
+    def _tokenize(self, batch, padding_idx=1):  # padding_idx that is used in mpnet
+        sep = self.tokenizer.sep_token
+        parsed = [sep.join(self._parse(dia)) for dia in batch]
+        inputs = self.tokenizer(parsed, padding='longest', return_tensors='pt')
+        inputs['position_ids'] = create_position_ids_from_input_ids(inputs['input_ids'], padding_idx=padding_idx)
+        return inputs
+    
+    def forward(self, batch):
+        inputs = self._tokenize(batch).to(self.device)
+        hidden_states = self.model(**inputs)    # (B, T, H)
+        encodings = hidden_states[:, 0, :]
+        return encodings
+        

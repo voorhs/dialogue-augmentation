@@ -42,7 +42,10 @@ class HSSATokenizer(MPNetTokenizerFast):
 
         for dia in text:
             for item in dia:
-                role_token = self.sys_token if item['speaker'] else self.user_token
+                if item['speaker'] is not None:
+                    role_token = self.sys_token if item['speaker'] else self.user_token
+                else:
+                    role_token = ''
                 uts.append(role_token + item['utterance'])
             for _ in range(max_dia_len - len(dia)):
                 uts.append('')

@@ -281,12 +281,12 @@ class HSSAEmbeddings(nn.Module):
         self.position_embeddings = nn.Embedding(
             config.max_position_embeddings, config.hidden_size, padding_idx=self.padding_idx
         )
-        if config.max_turn_embeddings is not None:
+        if config.max_ut_embeddings is not None:
             self.turn_embeddings = nn.Embedding(
-                config.max_turn_embeddings, config.hidden_size, padding_idx=self.padding_idx
+                config.max_ut_embeddings, config.hidden_size, padding_idx=self.padding_idx
             )
             self.register_buffer(
-                "turn_ids", torch.arange(config.max_turn_embeddings), persistent=False
+                "turn_ids", torch.arange(config.max_ut_embeddings), persistent=False
             )
 
         self.LayerNorm = nn.LayerNorm(config.hidden_size, eps=config.layer_norm_eps)
@@ -319,10 +319,11 @@ class HSSAEmbeddings(nn.Module):
 
         embeddings = inputs_embeds + position_embeddings
         
-        if self.config.max_turn_embeddings is not None:
+        if self.config.max_ut_embeddings is not None:
             B = input_shape[0] // max_dia_len
-            turn_embeddings = self.turn_embeddings(self.turn_ids[:max_dia_len])[None, :, None, :]
-            embeddings = embeddings.view(B, max_dia_len, seq_length, -1) + turn_embeddings
+            turn_embeddings = self.turn_embeddings(self.turn_ids[:max_dia_len])[None, :, :]
+            embeddings = embeddings.view(B, max_dia_len, seq_length, -1)
+            embeddings[:, :, 1, :] += turn_embeddings   # add to <system> / <user>
             embeddings = embeddings.view(-1, seq_length, self.config.hidden_size)
             
         embeddings = self.LayerNorm(embeddings)
@@ -385,9 +386,9 @@ class HSSAModel(HSSAPreTrainedModel):
             utterance_mask
         )
 
-        if self.config.pool_utterances:
-            hidden_states = torch.mean(hidden_states, dim=1)
-            hidden_states /= torch.linalg.norm(hidden_states, dim=0)
+        B, T = utterance_mask.shape
+        _, S, H = hidden_states.shape
+        hidden_states = hidden_states.view(B, T, S, H)
 
         return hidden_states
 
