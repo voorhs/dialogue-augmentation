@@ -291,4 +291,3 @@ class SimpleDialogueEncoder(nn.Module):
         hidden_states = self.model(**inputs)    # (B, T, H)
         encodings = hidden_states[:, 0, :]
         return encodings
-        

@@ -5,11 +5,35 @@ import nltk
 from nltk.corpus import stopwords
 from transformers import AutoTokenizer, pipeline
 from typing import List, Literal
+from tqdm import tqdm
+
+def to_uts(dialogues):
+    res = []
+    for dia in dialogues:
+        for item in dia:
+            res.append(item['utterance'])
+    return res
+
+def to_dia(uts, dialogues):
+    dia_lens = [len(dia) for dia in dialogues]
+    res = []
+    for i, length in enumerate(dia_lens):
+        start = sum(dia_lens[:i])
+        end = start + length
+        cur_res = []
+        for j, ut in enumerate(uts[start:end]):
+            cur_res.append({
+                'speaker': dialogues[i][j]['speaker'],
+                'utterance': ut
+            })
+        res.append(cur_res)
+    return res
+
 
 class BackTranslator:
     """Back Translate each utterance (separately). Preserves intent."""
 
-    def __init__(self, language, forbidden_tokens=None, device='cpu'):
+    def __init__(self, language, device='cpu'):
         self.language = language
         self.device = device
 
@@ -47,20 +71,10 @@ class BackTranslator:
         - name: str, name of output .json file
         """
 
-        # to `self.language`
-        translator = pipeline('translation_en_to_fr', model=f'Helsinki-NLP/opus-mt-en-{self.language}', device=self.device)
-        original, dialogues = self._load_utterances()
-        translated = [a['translation_text'] for a in translator(original, batch_size=4)]
-        del translator
-
-        # back to english
-        translator = pipeline('translation_fr_to_en', model=f'Helsinki-NLP/opus-mt-{self.language}-en', device=self.device)
-        back_translated = [a['translation_text'] for a in translator(translated, batch_size=4)]
-        del translator
-
+        uts = self._load_utterances()
+        back_translated = self._augment(uts)
         self._save(back_translated, dialogues, name)
 
-    
     def from_argument(self, dialogues):
         """
         Params
@@ -68,19 +82,44 @@ class BackTranslator:
         - dialogues: list[list[str]]
         """
 
-        # to french
-        translator = pipeline('translation_en_to_fr', model=f'Helsinki-NLP/opus-mt-en-{self.language}', device=self.device)
-        original = []
-        for dia in dialogues:
-            original.extend(dia)
-        translated = [a['translation_text'] for a in translator(original)]
-        del translator
+        uts = to_uts(dialogues)
+        forth = self._forth(uts)
+        back = self._back(forth)
+        
+        ru = to_dia(forth, dialogues)
+        res = to_dia(back, dialogues)
+        return res, ru
 
-        # back to english
-        translator = pipeline('translation_fr_to_en', model=f'Helsinki-NLP/opus-mt-{self.language}-en', device=self.device)
-        back_translated = [a['translation_text'] for a in translator(translated)]
+    def _augment(self, uts):
+        return self._back(self._forth(uts))
 
-        return back_translated
+    def _forth(self, uts, batch_size=16):
+        model = pipeline(
+            f'translation_en_to_{self.language}',
+            model=f'Helsinki-NLP/opus-mt-en-{self.language}',
+            batch_size=batch_size,
+            device=self.device
+        )
+        res = []
+        for start in tqdm(range(0, len(uts), batch_size), desc='forward translating batches'):
+            end = start + batch_size
+            batch = uts[start:end]
+            res.extend([a['translation_text'] for a in model(batch)])
+        return res
+    
+    def _back(self, uts, batch_size=16):
+        model = pipeline(
+            f'translation_{self.language}_to_en',
+            model=f'Helsinki-NLP/opus-mt-{self.language}-en',
+            batch_size=batch_size,
+            device=self.device
+        )
+        res = []
+        for start in tqdm(range(0, len(uts), batch_size), desc='backward translating batches'):
+            end = start + batch_size
+            batch = uts[start:end]
+            res.extend([a['translation_text'] for a in model(batch)])
+        return res
 
 
 class Inserter:
@@ -232,8 +271,7 @@ class Inserter:
         list of utterances merged into single list
         """
 
-        mask_filler = pipeline('fill-mask', model=self.model, device=self.device)
-        dataset_fill_results = mask_filler(masked_dialogues, top_k=1000)
+        dataset_fill_results = self._to_mlm(masked_dialogues)
         res = []
         for dia, dia_fill_results in zip(masked_dialogues, dataset_fill_results):
             # choose only confident predictions
@@ -272,8 +310,7 @@ class Inserter:
                 uts_with_mask.append(ut)
 
         # feed to MLM
-        mask_filler = pipeline('fill-mask', model=self.model, device=self.device)
-        dataset_fill_results = mask_filler(uts_with_mask, top_k=1000)
+        dataset_fill_results = self._to_mlm(uts_with_mask)
         
         # insert predictions to utterances with <mask>
         res = []
@@ -320,12 +357,13 @@ class Inserter:
                 cont_with_mask.append(ut)
 
         # feed to MLM
-        mask_filler = pipeline('fill-mask', model=self.model, device=self.device)
-        dataset_fill_results = mask_filler(cont_with_mask, top_k=1000)
+        dataset_fill_results = self._to_mlm(cont_with_mask)
+        if len(cont_with_mask) != len(dataset_fill_results):
+            raise RuntimeError("Something's wrong with MLM mask filling")
         
         # insert predictions to contexts with <mask>
         res = []
-        for context, context_fill_results in zip(cont_with_mask, dataset_fill_results):
+        for i, (context, context_fill_results) in enumerate(zip(cont_with_mask, dataset_fill_results)):
             if isinstance(context_fill_results[0], dict):
                 context_fill_results = [context_fill_results]
             candidates = [self._choose_confident(mask_fill_results) for mask_fill_results in context_fill_results]
@@ -341,6 +379,25 @@ class Inserter:
             res_uts.extend(context.split('\n'))
 
         return res_uts
+
+    def _to_mlm(self, strings_with_masks, batch_size=16):
+        model = pipeline(
+            'fill-mask',
+            model=self.model,
+            batch_size=batch_size,
+            device=self.device
+        )
+        res = []
+        for start in tqdm(range(0, len(strings_with_masks), batch_size), desc='batches'):
+            end = start + batch_size
+            batch = strings_with_masks[start:end]
+            outputs = model(batch, top_k=100)
+            if len(batch) == 1:
+                # hf pipeline implementation employs terrible idea that returned output doesn't follow nested structure of input list if the latter contains single element 
+                # https://github.com/huggingface/transformers/blob/main/src/transformers/pipelines/fill_mask.py#L271
+                outputs = [outputs]
+            res.extend(outputs)
+        return res
 
     @staticmethod
     def _load_dialogues():
@@ -385,13 +442,16 @@ class Inserter:
 
         Return
         ------
-        list of utterances merged into single list
+        - list[list[str]]
         """
+        uts = []
+        for dia in dialogues:
+            uts.append([item['utterance'] for item in dia])
 
         if self.mask_utterance_level:
-            masked = self._insert_masks_utterance_level(dialogues)
+            masked = self._insert_masks_utterance_level(uts)
         else:
-            masked = self._insert_masks_dialogue_level(dialogues)
+            masked = self._insert_masks_dialogue_level(uts)
         
         if isinstance(self.fill_utterance_level, int):
             filled = self._fill_masks_context_level(masked, self.fill_utterance_level)
@@ -400,7 +460,9 @@ class Inserter:
         else:
             filled = self._fill_masks_dialogue_level(masked)
         
-        return filled
+        res = to_dia(filled, dialogues)
+
+        return res
 
 
 class Replacer(Inserter):
@@ -763,115 +825,211 @@ Specific input:
 
 
 from nup.models.dialogue import UtteranceTransformerDMConfig, UtteranceTransformerDM
-from nup.models.listwise import UtteranceSorter
+from nup.models.listwise import DecoderUtteranceSorter, Decoder
 import torch
 
-@torch.no_grad()
+
+def load_listwise_decoder(ckpt_path, device):
+    head_dropout_prob = 0.02
+    encoder_name = 'sentence-transformers/all-mpnet-base-v2'
+    config = UtteranceTransformerDMConfig(
+        num_attention_heads=4,
+        attention_probs_dropout_prob=0.02,
+        n_layers=4,
+        encoder_name=encoder_name,
+        embed_turn_ids=False,
+        is_casual=False
+    )
+    _dialogue_model = UtteranceTransformerDM(config)
+
+    _model = DecoderUtteranceSorter(
+        dialogue_model=_dialogue_model,
+        dropout_prob=head_dropout_prob,
+        max_n_uts=20,
+        decoder=Decoder(top_k=2)
+    )
+
+    return DecoderUtteranceSorter.from_checkpoint(
+        path_to_ckpt=ckpt_path,
+        model=_model,
+        map_location=device
+    )
+
+
 class ListwiseShuffler:
     def __init__(
             self,
-            ckpt_path,
-            device
+            decoder=Decoder(),
+            ckpt_path='/home/alekseev_ilya/dialogue-augmentation/nup/logs/training/listwie-decoder-symmetric-t1/checkpoints/last.ckpt',
+            device='cpu',
+            thresh=-np.inf
         ):
-        _ranker_head_dropout_prob = 0.02
-        _encoder_name = 'aws-ai/dse-roberta-base'
-        _config = UtteranceTransformerDMConfig(
-            num_attention_heads=4,
-            attention_probs_dropout_prob=0.02,
-            n_layers=4,
-            encoder_name=_encoder_name,
-            embed_turn_ids=False,
-            is_casual=False
-        )
-        _dialogue_model = UtteranceTransformerDM(_config)
-        _model = UtteranceSorter(
-            dialogue_model=_dialogue_model,
-            dropout_prob=_ranker_head_dropout_prob
-        )
-        self.model = UtteranceSorter.from_checkpoint(
-            path_to_ckpt=ckpt_path,
-            model=_model,
-            map_location=device
-        ).eval()
+        self.decoder = decoder
+        self.thresh = thresh
+        self.model = load_listwise_decoder(ckpt_path, device)
 
     def from_file_system(self, name):
         dialogues = json.load(open('aug-data/original.json', 'r'))
-        aug_dialogues = self.model.augment(dialogues)
-        json.dump(aug_dialogues, open(f'aug-data/{name}.json', 'w'))
+        res = self.from_argument(dialogues)
+        json.dump(res, open(f'aug-data/{name}.json', 'w'))
+
+    def from_argument(self, dialogues, batch_size=192):
+        aug_dialogues_with_scores = []
+        for i_batch in tqdm(range(0, len(dialogues), batch_size), desc='shuffling batches'):
+            start = i_batch
+            end = i_batch + batch_size
+            batch = dialogues[start:end]
+            aug_dialogues_with_scores.extend(self.model.augment(batch, self.decoder))
+        
+        return [aug if score >= self.thresh else None for aug, score in aug_dialogues_with_scores]
 
 
 from nup.models.pairwise import ChainCosine, TargetEncoder, ContextEncoderConcat
 from nup.models.aux import mySentenceTransformer
-import torch.nn.functional as F
-from collections import defaultdict
 from sklearn.cluster import AgglomerativeClustering
 
 
-@torch.no_grad()
-class PairwiseShuffler:
-    def __init__(self, ckpt_path, device):
-        context_size = 3
-        encoder_name = 'aws-ai/dse-bert-large'
+def load_pairwise_cat(ckpt_path, device):
+    context_size = 3
+    encoder_name = 'aws-ai/dse-bert-large'
 
-        _encoder = mySentenceTransformer(encoder_name)
-        _target_encoder = TargetEncoder(_encoder)
-        _context_encoder = ContextEncoderConcat(_encoder, context_size=context_size)
-        _model = ChainCosine(
-            target_encoder=_target_encoder,
-            context_encoder=_context_encoder,
-            projection_size=512,
-            context_size=context_size,
-        )
+    _encoder = mySentenceTransformer(encoder_name)
+    _target_encoder = TargetEncoder(_encoder)
+    _context_encoder = ContextEncoderConcat(_encoder, context_size=context_size)
+    _model = ChainCosine(
+        target_encoder=_target_encoder,
+        context_encoder=_context_encoder,
+        projection_size=256,
+        context_size=context_size,
+    )
 
-        self.model = ChainCosine.from_checkpoint(
-            path_to_ckpt='/home/alekseev_ilya/dialogue-augmentation/nup/logs/training/pairwise-best-resumed/checkpoints/last.ckpt',
-            model=_model,
-            map_location='cuda'
-        ).eval()
+    return ChainCosine.from_checkpoint(
+        path_to_ckpt=ckpt_path,
+        model=_model,
+        map_location=device
+    ).eval()
+
+
+class PairwiseCutter:
+    def __init__(
+            self,
+            ckpt_path='/home/alekseev_ilya/dialogue-augmentation/nup/logs/training/pairwise-cat-speaker-issue/checkpoints/last.ckpt',
+            device='cpu',
+            thresh=-np.inf
+        ):
+        self.thresh = thresh
+        self.model = load_pairwise_cat(ckpt_path, device)
 
     def from_file_system(self, name):
         dialogues = json.load(open('aug-data/original.json', 'r'))
-
-        df_scores = defaultdict(list)
+        
+        res = []
+        for dia in tqdm(dialogues, desc='cutting dialogues'):
+            aug, score = self._cut(self.model, dia)
+            res.append(aug if score >= self.thresh else None)
             
-        for i_dia, dia in enumerate(dialogues):
-            with torch.no_grad():
-                batch = self.model.make_batch_from_dia(dia)
-                similarities = self.model.get_logits(batch, temperature=1).cpu().numpy()
-                
-                # mask out similarities between utterances of same speaker
-                # speaker = [item['speaker'] for item in dia]
-                # context_speaker = np.array(speaker[:-1])[:, None]
-                # target_speaker = np.array(speaker[1:])[None, :]
-                # mask = (context_speaker != target_speaker) | np.eye(len(speaker)-1, dtype=np.bool_)
-                # similarities[~mask] = -1e3
+        json.dump(res, open(f'aug-data/{name}.json', 'w'))
 
-                labels = AgglomerativeClustering(
-                    n_clusters=len(dia) // 4,
-                    linkage='average',
-                    metric='precomputed'
-                ).fit_predict(similarities)
+    def from_argument(self, dialogues):
+        res = []
+        for dia in tqdm(dialogues, desc='cutting dialogues'):
+            aug, score = self._cut(self.model, dia)
+            res.append(aug if score >= self.thresh else None)
+        return res
 
-                raise NotImplementedError()
+    @staticmethod
+    def _cut(model, dia):
+        """drops all clusters except the biggest one. applies transformation only to dialogues with 6 utterances at least"""
+        if len(dia) < 6:
+            return None, -np.inf
+        end = len(dia) // 3
+        start = 2
+        variations = []
+        for n_clusters in range(start, end+1):
+            clusterwise_uts = PairwiseCutter._cluster(model, dia, n_clusters)
+            ids = clusterwise_uts[np.argmax([len(clust) for clust in clusterwise_uts])]
+            aug = [dia[i] for i in ids]
+            score = model.score(aug)
+            variations.append((aug, score))
+        res, score = max(variations, key=lambda x: x[1])
+        return res, score
+
+    @staticmethod
+    @torch.no_grad()
+    def _cluster(model, dia, n_clusters):
+        """clusters utterances within dia according to logits (similarities) from pairwise model"""
+        batch = model.make_batch_from_dia(dia)
+        similarities = model.get_logits(batch, temperature=1).cpu().numpy()
+        
+        # mask out similarities between utterances of same speaker
+        # speaker = [item['speaker'] for item in dia]
+        # context_speaker = np.array(speaker[:-1])[:, None]
+        # target_speaker = np.array(speaker[1:])[None, :]
+        # mask = (context_speaker != target_speaker) | np.eye(len(speaker)-1, dtype=np.bool_)
+        # similarities[~mask] = -1e3
+
+        labels = AgglomerativeClustering(
+            n_clusters=n_clusters,
+            linkage='average',
+            metric='precomputed'
+        ).fit_predict(similarities)
+
+        labels = np.r_[labels[0], labels]
+
+        res = [[] for _ in range(len(np.unique(labels)))]
+        for i_ut, lab in enumerate(labels):
+            res[lab].append(i_ut)
+        return res
 
 
+import random
+class PairwiseShuffler:
+    def __init__(
+            self,
+            ckpt_path='/home/alekseev_ilya/dialogue-augmentation/nup/logs/training/pairwise-cat-speaker-issue/checkpoints/last.ckpt',
+            device='cpu',
+            thresh=-np.inf
+        ):
+        self.thresh = thresh
+        self.model = load_pairwise_cat(ckpt_path, device)
 
-    def _get_score(logits, absolute=False, reduction='none'):
-        if absolute:
-            scores = logits.diag()
-        else:
-            scores = F.softmax(logits, dim=1).diag().log10()
-        if reduction == 'mean':
-            score = scores.mean()
-        elif reduction == 'min':
-            score = scores.min()
-        elif reduction == 'max':
-            score = scores.max()
-        elif reduction != 'none':
-            raise ValueError('unexpected reduction type')
-        else:
-            return scores.cpu().numpy()
-        return score.cpu().item()
+    def from_file_system(self, name):
+        dialogues = json.load(open('aug-data/original.json', 'r'))
+        
+        res = []
+        for dia in tqdm(dialogues, desc='cutting dialogues'):
+            aug, score = self._shuffle(self.model, dia)
+            res.append(aug if score >= self.thresh else None)
+
+        json.dump(res, open(f'aug-data/{name}.json', 'w'))
+    
+    def from_argument(self, dialogues):
+        res = []
+        for dia in tqdm(dialogues, desc='shuffling dialogues'):
+            aug, score = self._shuffle(self.model, dia)
+            res.append(aug if score >= self.thresh else None)
+        return res
+
+    @staticmethod
+    @torch.no_grad()
+    def _shuffle(model, dia):
+        if len(dia) < 12:
+            return None, -np.inf
+        end = len(dia) // 3
+        start = 4
+        variations = []
+        for n_clusters in range(start, end+1):
+            clusterwise_uts = PairwiseCutter._cluster(model, dia, n_clusters)
+            for i_try in range(n_clusters):
+                random.shuffle(clusterwise_uts)
+                aug = []
+                for ut_ids in clusterwise_uts:
+                    aug.extend([dia[i] for i in ut_ids])
+                score = model.score(aug)
+                variations.append((aug, score))
+        res, score = max(variations, key=lambda x: x[1])
+        return res, score
+
 
 if __name__ == "__main__":
 
@@ -928,8 +1086,76 @@ if __name__ == "__main__":
     # LlamaParaphraser('creative', llm, tokenizer).from_file_system('llm_creative')
     # LlamaParaphraser('playful', llm, tokenizer).from_file_system('llm_playful')
     
-    listwise_shuffler = ListwiseShuffler(
-        ckpt_path='/home/alekseev_ilya/dialogue-augmentation/nup/logs/training/listwise-utterance-transformer-amazon-resumed/checkpoints/last.ckpt',
-        device='cuda:0'
-    )
-    listwise_shuffler.from_file_system('listwise_shuffler')
+    # listwise_shuffler = ListwiseShuffler(
+    #     ckpt_path='/home/alekseev_ilya/dialogue-augmentation/nup/logs/training/listwise-utterance-transformer-amazon-resumed/checkpoints/last.ckpt',
+    #     device='cuda:0'
+    # )
+    # listwise_shuffler.from_file_system('listwise_shuffler')
+
+    import torch
+    torch.set_float32_matmul_precision('medium')    
+
+    import argparse
+    ap = argparse.ArgumentParser()
+    ap.add_argument('--method', dest='method', required=True, choices=[
+        'back-translate', 'insert', 'replace',
+        'listwise-shuffler', 'pairwise-cutter', 'pairwise-shuffler'
+    ])
+    ap.add_argument('--path-out', dest='path_out', default=None)
+    ap.add_argument('--cuda', dest='cuda', default='0')
+    ap.add_argument('--path-in', dest='path_in', default='/home/alekseev_ilya/dialogue-augmentation/nup/dialogues/train')
+    args = ap.parse_args()
+
+    # from dataclasses import dataclass
+    # @dataclass
+    # class Args:
+    #     method = 'listwise-shuffler'
+    #     cuda = '2'
+    #     path_in = '/home/alekseev_ilya/dialogue-augmentation/nup/dialogues/train'
+    #     path_out = None
+    # args = Args()
+
+    import os
+    os.environ['TOKENIZERS_PARALLELISM'] = 'false'
+    os.environ['CUDA_VISIBLE_DEVICES'] = args.cuda
+
+    json_chunks = sorted([filename for filename in os.listdir(args.path_in) if filename.endswith('.json')])
+    if args.path_out is None:
+        args.path_out = os.path.join(os.getcwd(), 'augmented', args.method)
+    if not os.path.exists(args.path_out):
+        os.makedirs(args.path_out)
+
+    if args.method == 'back-translate':
+        augmenter = BackTranslator(language='ru', device='cuda')
+    elif args.method == 'insert':
+        augmenter = Inserter(
+            fraction=0.5,
+            score_threshold=0.005,
+            k=5,
+            mask_utterance_level=True,
+            fill_utterance_level=2,
+            model='microsoft/mpnet-base',
+            device='cuda'
+        )
+    elif args.method == 'replace':
+        augmenter = Replacer(
+            k=3,
+            fill_utterance_level=2,
+            model='microsoft/mpnet-base',
+            device='cuda'
+        )
+    elif args.method == 'listwise-shuffler':
+        augmenter = ListwiseShuffler(device='cuda')
+    elif args.method == 'pairwise-cutter':
+        augmenter = PairwiseCutter(device='cuda')
+    elif args.method == 'pairwise-shuffler':
+        augmenter = PairwiseShuffler(device='cuda')
+        exit()
+    
+    for chunk in tqdm(json_chunks[:80]):
+        dialogues = json.load(open(os.path.join(args.path_in, chunk), 'r'))
+        augmented = augmenter.from_argument(dialogues)
+        if args.method == 'back-translate':
+            augmented, ru = augmented
+            json.dump(ru, open(os.path.join(args.path_out, 'ru-' + chunk), 'w'))
+        json.dump(augmented, open(os.path.join(args.path_out, chunk), 'w'))
