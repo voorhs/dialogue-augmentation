@@ -263,7 +263,7 @@ class HSSADM(nn.Module):
 
 
 #! add sliding window feature? or just use xlnet?
-class SimpleDialogueEncoder(nn.Module):
+class SimpleDialogueEncoder(nn.Module, HParamsPuller):
     def __init__(self, hf_model_name):
         super().__init__()
 
@@ -278,17 +278,18 @@ class SimpleDialogueEncoder(nn.Module):
 
     @staticmethod
     def _parse(dia):
-        return [f'[{item["speaker"]}] {item["utterance"]}' for item in dia]
+        return [f'{item["speaker"]} {item["utterance"]}' for item in dia]
 
-    def _tokenize(self, batch, padding_idx=1):  # padding_idx that is used in mpnet
-        sep = self.tokenizer.sep_token
-        parsed = [sep.join(self._parse(dia)) for dia in batch]
-        inputs = self.tokenizer(parsed, padding='longest', return_tensors='pt')
-        inputs['position_ids'] = create_position_ids_from_input_ids(inputs['input_ids'], padding_idx=padding_idx)
+    @staticmethod
+    def _tokenize(tokenizer, batch, padding_idx=1):  # padding_idx that is used in mpnet
+        sep = tokenizer.sep_token
+        parsed = [sep.join(SimpleDialogueEncoder._parse(dia)) for dia in batch]
+        inputs = tokenizer(parsed, padding='longest', return_tensors='pt')
+        # inputs['position_ids'] = create_position_ids_from_input_ids(inputs['input_ids'], padding_idx=padding_idx)
         return inputs
     
     def forward(self, batch):
-        inputs = self._tokenize(batch).to(self.device)
-        hidden_states = self.model(**inputs)    # (B, T, H)
-        encodings = hidden_states[:, 0, :]      # (B, H)
+        inputs = self._tokenize(self.tokenizer, batch).to(self.device)
+        hidden_states = self.model(**inputs).last_hidden_state      # (B, T, H)
+        encodings = hidden_states[:, 0, :]                          # (B, H)
         return F.normalize(encodings, dim=-1)

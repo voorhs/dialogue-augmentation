@@ -51,7 +51,7 @@ class ContrastiveDataset(Dataset):
         }
         ```"""
         i_chunk = bisect_right(self.chunk_beginnings, x=i)
-        idx_within_chunk = i - self.chunk_beginnings[i]
+        idx_within_chunk = i - self.chunk_beginnings[i_chunk]
         item = json.load(open(os.path.join(self.path, self.chunk_names[i_chunk]), 'r'))[idx_within_chunk]
         return item
 
@@ -66,6 +66,7 @@ class LearnerConfig:
     weight_decay: float = 1e-2
     betas: Tuple[float, float] = (0.9, 0.999)
     k: int = 5
+    t: float = 0.05
 
 
 class Learner(pl.LightningModule):
@@ -98,24 +99,25 @@ class Learner(pl.LightningModule):
         hard_negatives_enc = self.model(hard_negatives) # (B+, H)
 
         # pos and neg scores
-        pairwise_scores = (origs_enc @ positives_enc.T).exp()
+        pairwise_scores = (origs_enc @ positives_enc.T / self.config.t).exp()
         pos_scores = pairwise_scores.diag()
-        neg_scores = pairwise_scores.sum(dim=1)
+        neg_scores1 = pairwise_scores.sum(dim=0)
+        neg_scores2 = pairwise_scores.sum(dim=1)
         
         # hard neg scores
         repeats = torch.tensor(hard_negatives_counts, device=self.model.device)
-        origs_enc_repeated = torch.repeat_interleave(origs_enc, repeats=repeats)
-        _hard_neg_scores = (origs_enc_repeated * hard_negatives_enc).sum(dim=1).exp()
+        origs_enc_repeated = torch.repeat_interleave(origs_enc, repeats=repeats, dim=0)
+        _hard_neg_scores = (origs_enc_repeated * hard_negatives_enc / self.config.t).sum(dim=1).exp()
         hard_neg_scores = []
         for i, count in enumerate(hard_negatives_counts):
             start = sum(hard_negatives_counts[:i])
             end = start + count
             score = _hard_neg_scores[start:end].sum()
             hard_neg_scores.append(score)
-        hard_neg_scores = torch.concat(hard_neg_scores, dim=0)
+        hard_neg_scores = torch.tensor(hard_neg_scores, device=self.model.device)
 
         # compute contrastive loss with hard negatives
-        loss = (pos_scores / (neg_scores + hard_neg_scores)).log().neg().sum()
+        loss = (pos_scores / (neg_scores1 + neg_scores2 + hard_neg_scores)).log().neg().sum()
         
         # compute metric: retrieval accuracy
         topk_indicators = [i in top for i, top in enumerate(torch.topk(pairwise_scores, k=self.config.k, dim=1).indices)]
@@ -245,107 +247,3 @@ def freeze_hf_model(hf_model, finetune_layers):
         hf_model.encoder.layer[i].requires_grad_(i>=n_layers-finetune_layers)
         
 
-if __name__ == "__main__":
-    from ..nup.models.dialogue import SimpleDialogueEncoder
-
-    hf_model = 'roberta-base'
-    finetune_layers = 1
-
-    learner_config = LearnerConfig(
-        batch_size=32,
-        warmup_period=200,
-        do_periodic_warmup=True,
-        lr=3e-6,
-        kwargs={
-            'finetune_layers': finetune_layers
-        }
-    )
-    
-    model = SimpleDialogueEncoder(hf_model)
-    freeze_hf_model(model.model, finetune_layers)
-
-    learner = Learner(model, learner_config)
-
-    # ======= DEFINE DATA =======
-
-    path = '/home/alekseev_ilya/dialogue-augmentation/dialogue-encoder/dataset/train'
-    dataset = ContrastiveDataset(path)
-
-    from torch.utils.data import DataLoader
-    def collate_fn(batch):
-        return batch
-    train_loader = DataLoader(
-        dataset=dataset,
-        batch_size=learner_config.batch_size,
-        shuffle=False,
-        num_workers=3,
-        collate_fn=collate_fn
-    )
-
-    # val_loader = DataLoader(
-    #     dataset=dataset('.', 'val', fraction=.2),
-    #     batch_size=learner_config.batch_size,
-    #     shuffle=False,
-    #     num_workers=3,
-    #     collate_fn=collate_fn
-    # )
-
-    # ======= DEFINE TRAINER =======
-
-    from lightning.pytorch.callbacks import ModelCheckpoint, LearningRateMonitor
-    checkpoint_callback = ModelCheckpoint(
-        monitor='train_metric',
-        save_last=True,
-        # save_top_k=3,
-        mode='max',
-    )
-    lr_monitor = LearningRateMonitor(logging_interval='step')
-
-    import lightning.pytorch as pl
-    logger = pl.loggers.TensorBoardLogger(
-        save_dir='.',
-        # version=args.name,
-        name='/home/alekseev_ilya/dialogue-augmentation/dialogue-encoder/logs/'
-    )
-
-    trainer = pl.Trainer(
-        # max_epochs=1,
-        # max_time={'hours': 24},
-        
-        max_time={'minutes': 5},
-        # max_steps=0,
-
-        # hardware settings
-        accelerator='gpu',
-        deterministic=False,
-        precision="16-mixed",
-
-        # logging and checkpointing
-        # val_check_interval=args.interval,
-        # check_val_every_n_epoch=1,
-        logger=logger,
-        enable_progress_bar=False,
-        profiler=None,
-        callbacks=[checkpoint_callback, lr_monitor],
-        # log_every_n_steps=5,
-
-        # check if model is implemented correctly
-        overfit_batches=False,
-
-        # check training_step and validation_step doesn't fail
-        fast_dev_run=False,
-        num_sanity_val_steps=False
-    )
-
-    # ======= START TRAINING =======
-
-    from datetime import datetime
-    print('Started at', datetime.now().strftime("%H:%M:%S %d-%m-%Y"))
-
-    # do magic!
-    trainer.fit(
-        learner, train_loader, #val_loader,
-        # ckpt_path='/home/alekseev_ilya/dialogue-augmentation/nup/logs/training/listwise-clf/checkpoints/last.ckpt'
-    )
-
-    print('Finished at', datetime.now().strftime("%H:%M:%S %d-%m-%Y"))

@@ -1,20 +1,22 @@
-original_path = '/home/alekseev_ilya/dialogue-augmentation/dialogue-encoder/original'
+original_path = '/home/alekseev_ilya/dialogue-augmentation/dialogue_encoder/original'
 
 negative_paths = [
-    '/home/alekseev_ilya/dialogue-augmentation/dialogue-encoder/augmented/replace',
-    '/home/alekseev_ilya/dialogue-augmentation/dialogue-encoder/augmented/replace-cut',
+    '/home/alekseev_ilya/dialogue-augmentation/dialogue_encoder/augmented/replace',
+    '/home/alekseev_ilya/dialogue-augmentation/dialogue_encoder/augmented/replace-cut',
 ]
 
 positive_paths = [
-    '/home/alekseev_ilya/dialogue-augmentation/dialogue-encoder/augmented/back-translate',
-    '/home/alekseev_ilya/dialogue-augmentation/dialogue-encoder/augmented/back-translate-cut',
-    '/home/alekseev_ilya/dialogue-augmentation/dialogue-encoder/augmented/back-translate-shuffle',
-    '/home/alekseev_ilya/dialogue-augmentation/dialogue-encoder/augmented/cut',
-    '/home/alekseev_ilya/dialogue-augmentation/dialogue-encoder/augmented/insert',
-    '/home/alekseev_ilya/dialogue-augmentation/dialogue-encoder/augmented/shuffle'
+    '/home/alekseev_ilya/dialogue-augmentation/dialogue_encoder/augmented/back-translate',
+    '/home/alekseev_ilya/dialogue-augmentation/dialogue_encoder/augmented/back-translate-cut',
+    '/home/alekseev_ilya/dialogue-augmentation/dialogue_encoder/augmented/back-translate-shuffle',
+    '/home/alekseev_ilya/dialogue-augmentation/dialogue_encoder/augmented/cut-insert',
+    '/home/alekseev_ilya/dialogue-augmentation/dialogue_encoder/augmented/insert',
+    '/home/alekseev_ilya/dialogue-augmentation/dialogue_encoder/augmented/pairwise-shuffler',
+    '/home/alekseev_ilya/dialogue-augmentation/dialogue_encoder/augmented/pairwise-cutter',
+    '/home/alekseev_ilya/dialogue-augmentation/dialogue_encoder/augmented/shuffle-insert',
 ]
 
-res_path = '/home/alekseev_ilya/dialogue-augmentation/dialogue-encoder/dataset/train'
+res_path = '/home/alekseev_ilya/dialogue-augmentation/dialogue_encoder/dataset/train'
 
 N_CHUNKS = 80
 CHUNK_SIZE = 512
