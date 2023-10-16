@@ -8,6 +8,7 @@ from transformers.models.mpnet.modeling_mpnet import create_position_ids_from_in
 from collections import defaultdict
 from .train_utils import HParamsPuller
 from typing import Literal
+import torch.nn.functional as F
 
 
 @dataclass
@@ -289,5 +290,5 @@ class SimpleDialogueEncoder(nn.Module):
     def forward(self, batch):
         inputs = self._tokenize(batch).to(self.device)
         hidden_states = self.model(**inputs)    # (B, T, H)
-        encodings = hidden_states[:, 0, :]
-        return encodings
+        encodings = hidden_states[:, 0, :]      # (B, H)
+        return F.normalize(encodings, dim=-1)
