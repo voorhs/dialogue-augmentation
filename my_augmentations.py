@@ -417,18 +417,7 @@ class Inserter:
         # load data
         dialogues, original = self._load_dialogues()
 
-        # perform masking and insertion
-        if self.mask_utterance_level:
-            masked = self._insert_masks_utterance_level(dialogues)
-        else:
-            masked = self._insert_masks_dialogue_level(dialogues)
-        
-        if not isinstance(self.fill_utterance_level, bool):
-            filled = self._fill_masks_context_level(masked, self.fill_utterance_level)
-        elif self.fill_utterance_level:
-            filled = self._fill_masks_utterance_level(masked)
-        else:
-            filled = self._fill_masks_dialogue_level(masked)
+        filled = self._augment(dialogues)
         
         BackTranslator._save(filled, original, name)
     
@@ -448,10 +437,17 @@ class Inserter:
         for dia in dialogues:
             uts.append([item['utterance'] for item in dia])
 
+        filled = self._augment(uts)
+        
+        res = to_dia(filled, dialogues)
+
+        return res
+    
+    def _augment(self, dialogues):
         if self.mask_utterance_level:
-            masked = self._insert_masks_utterance_level(uts)
+            masked = self._insert_masks_utterance_level(dialogues)
         else:
-            masked = self._insert_masks_dialogue_level(uts)
+            masked = self._insert_masks_dialogue_level(dialogues)
         
         if isinstance(self.fill_utterance_level, int):
             filled = self._fill_masks_context_level(masked, self.fill_utterance_level)
@@ -459,10 +455,7 @@ class Inserter:
             filled = self._fill_masks_utterance_level(masked)
         else:
             filled = self._fill_masks_dialogue_level(masked)
-        
-        res = to_dia(filled, dialogues)
-
-        return res
+        return filled
 
 
 class Replacer(Inserter):
@@ -1154,8 +1147,12 @@ if __name__ == "__main__":
     
     for chunk in tqdm(json_chunks[:80]):
         dialogues = json.load(open(os.path.join(args.path_in, chunk), 'r'))
-        augmented = augmenter.from_argument(dialogues)
+        clean_dialogues = [dia for dia in dialogues if dia is not None]
+        augmented = augmenter.from_argument(clean_dialogues)
         if args.method == 'back-translate':
             augmented, ru = augmented
             json.dump(ru, open(os.path.join(args.path_out, 'ru-' + chunk), 'w'))
+        for i, dia in enumerate(dialogues):
+            if dia is None:
+                augmented.insert(i, None)
         json.dump(augmented, open(os.path.join(args.path_out, chunk), 'w'))
