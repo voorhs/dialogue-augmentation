@@ -70,6 +70,7 @@ if __name__ == "__main__":
         save_last=True,
         save_top_k=1,
         mode='max',
+        every_n_train_steps=2000
     )
     lr_monitor = LearningRateMonitor(logging_interval='step')
 

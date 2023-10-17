@@ -292,4 +292,7 @@ class SimpleDialogueEncoder(nn.Module, HParamsPuller):
         inputs = self._tokenize(self.tokenizer, batch).to(self.device)
         hidden_states = self.model(**inputs).last_hidden_state      # (B, T, H)
         encodings = hidden_states[:, 0, :]                          # (B, H)
-        return F.normalize(encodings, dim=-1)
+        return encodings
+
+    def get_hidden_size(self):
+        return self.model.config.hidden_size

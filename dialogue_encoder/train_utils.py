@@ -10,6 +10,10 @@ from torch.optim import AdamW
 from torch.optim.lr_scheduler import LambdaLR
 import torch.nn as nn
 import torch
+from typing import Literal
+from datasets import load_dataset
+import torch.nn.functional as F
+from torchmetrics.functional.classification import multilabel_f1_score
 
 
 class ContrastiveDataset(Dataset):
@@ -18,7 +22,7 @@ class ContrastiveDataset(Dataset):
         
         chunk_names = [filename for filename in os.listdir(path) if filename.endswith('.json') and not filename.startswith('ru')]
         self.chunk_names = sorted(chunk_names, key=lambda x: int(x.split('.')[0]))
-        chunk_sizes = [len(chunk) for chunk in (json.load(open(os.path.join(path, chunk_name))) for chunk_name in chunk_names)]
+        chunk_sizes = [len(chunk) for chunk in (json.load(open(os.path.join(path, chunk_name))) for chunk_name in self.chunk_names)]
         self.chunk_beginnings = np.cumsum(chunk_sizes).tolist()
         
         self.n_chunks = len(self.chunk_names)
@@ -56,6 +60,31 @@ class ContrastiveDataset(Dataset):
         return item
 
 
+class MultiWOZServiceClfDataset(Dataset):
+    def __init__(self, split: Literal['train', 'test', 'validation']):
+        self.split = split
+        self.dataset = load_dataset('multi_woz_v22')[split]
+        self.services = [
+            'attraction', 'bus', 'hospital',
+            'hotel', 'restaurant', 'taxi', 'train'
+        ]
+
+    def __len__(self):
+        return len(self.dataset)
+    
+    def __getitem__(self, i):
+        item = self.dataset[i]
+        
+        services = item['services']
+        target = torch.tensor([int(serv in services) for serv in self.services])    # multi one hot
+        
+        uts = item['utterance']
+        speakers = item['speaker']
+        dia = [{'utterance': ut, 'speaker': sp} for ut, sp in zip(uts, speakers)]
+        
+        return dia, target
+
+
 @dataclass
 class LearnerConfig:
     kwargs: field(default_factory=dict) = None,
@@ -67,6 +96,7 @@ class LearnerConfig:
     betas: Tuple[float, float] = (0.9, 0.999)
     k: int = 5
     t: float = 0.05
+    loss: Literal['contrastive', 'ict', 'multiwoz_service_clf']
 
 
 class Learner(pl.LightningModule):
@@ -75,7 +105,19 @@ class Learner(pl.LightningModule):
         self.model = model
         self.config = config
 
+        if self.config.loss == 'multiwoz_service_clf':
+            self.clf_head = nn.Linear(self.model.get_hidden_size(), 7)
+
     def forward(self, batch):
+        if self.config.loss == 'contrastive':
+            return self._contrastive_step(batch)
+        if self.config.loss == 'ict':
+            raise NotImplementedError()
+        if self.config.loss == 'multiwoz_service_clf':
+            raise NotImplementedError()
+
+    def _contrastive_step(self, batch):
+        """`batch` is a list of samples from ContrastiveDataset"""
         origs = [sample['orig'] for sample in batch]
         
         # select positives
@@ -94,9 +136,9 @@ class Learner(pl.LightningModule):
             hard_negatives_counts.append(len(negs))
 
         # encode all dialogues
-        origs_enc = self.model(origs)           # (B, H)
-        positives_enc = self.model(positives)   # (B, H)
-        hard_negatives_enc = self.model(hard_negatives) # (B+, H)
+        origs_enc = F.normalize(self.model(origs), dim=1)                   # (B, H)
+        positives_enc = F.normalize(self.model(positives), dim=1)           # (B, H)
+        hard_negatives_enc = F.normalize(self.model(hard_negatives), dim=1) # (B+, H)
 
         # pos and neg scores
         pairwise_scores = (origs_enc @ positives_enc.T / self.config.t).exp()
@@ -124,6 +166,32 @@ class Learner(pl.LightningModule):
         topk_accuracy = np.mean(topk_indicators)
 
         return loss, topk_accuracy
+
+    def _multiwoz_service_clf_step(self, batch):
+        """`batch` is a list of samples from MultiWOZServiceClfDataset"""
+        dialogues = [dia for dia, _ in batch]
+        targets = torch.stack([tar for _, tar in batch], dim=0)
+        
+        embeddings = self.model(dialogues)  # (B, H)
+        logits = self.clf_head(embeddings)  # (B, 7)
+        
+        loss = F.binary_cross_entropy_with_logits(logits, targets, reduction='mean')
+        metric = multilabel_f1_score(logits, targets, average='macro')
+
+        return loss, metric
+
+    def _multiwoz_service_clf_val(self, batch):
+        """`batch` is a list of samples from MultiWOZServiceClfDataset"""
+        dialogues = [dia for dia, _ in batch]
+        targets = torch.stack([tar for _, tar in batch], dim=0)
+        
+        embeddings = self.model(dialogues)  # (B, H)
+        logits = self.clf_head(embeddings)  # (B, 7)
+        
+        loss = F.binary_cross_entropy_with_logits(logits, targets, reduction='mean')
+        metric = multilabel_f1_score(logits, targets, average='macro')
+
+        return loss, metric
 
     def training_step(self, batch, batch_idx):
         loss, metric = self.forward(batch)
@@ -226,6 +294,16 @@ class Learner(pl.LightningModule):
             lr_lambda=lr_foo
         )
         return {"optimizer": optimizer, "lr_scheduler": {"scheduler": scheduler, "interval": "step", 'frequency': 1}}
+
+
+class LinearProbeClf(nn.Module):
+    def __init__(self, input_size, output_size):
+        self.clf = nn.Linear(input_size, output_size)
+    
+    def forward(self, embeddings, targets):
+        logits = self.clf(embeddings)
+        loss = F.binary_cross_entropy_with_logits(logits, targets, reduction='mean')
+        return loss
 
 
 class LightningCkptLoadable:
