@@ -14,6 +14,9 @@ from typing import Literal
 from datasets import load_dataset
 import torch.nn.functional as F
 from torchmetrics.functional.classification import multilabel_f1_score
+from torch.utils.data import DataLoader
+from lightning.pytorch.callbacks import ModelCheckpoint
+import math
 
 
 class ContrastiveDataset(Dataset):
@@ -61,28 +64,52 @@ class ContrastiveDataset(Dataset):
 
 
 class MultiWOZServiceClfDataset(Dataset):
-    def __init__(self, split: Literal['train', 'test', 'validation']):
-        self.split = split
-        self.dataset = load_dataset('multi_woz_v22')[split]
+    def __init__(self, path, fraction=1.):
+        self.path = path
+        
+        dia_name_validator = lambda x: x.startswith('dia') and x.endswith('.json')
+        services_name_validator = lambda x: x.startswith('services') and x.endswith('.json')
+        number_extractor = lambda x: int(x.split('-')[1].split('.')[0])
+        
+        def get_names(name_validator):
+            chunk_names = [filename for filename in os.listdir(path) if name_validator(filename)]
+            return sorted(chunk_names, key=number_extractor)
+
+        self.dia_chunk_names = get_names(dia_name_validator)
+        self.services_chunk_names = get_names(services_name_validator)
+
+        size = math.ceil(len(self.dia_chunk_names) * fraction)
+        self.dia_chunk_names = self.dia_chunk_names[:size]
+        self.services_chunk_names = self.services_chunk_names[:size]
+
+        chunk_sizes = [len(chunk) for chunk in (json.load(open(os.path.join(path, chunk_name))) for chunk_name in self.dia_chunk_names)]
+        self.chunk_beginnings = np.cumsum(chunk_sizes).tolist()
+
         self.services = [
             'attraction', 'bus', 'hospital',
             'hotel', 'restaurant', 'taxi', 'train'
         ]
+        self.len = self.chunk_beginnings[-1]
 
     def __len__(self):
-        return len(self.dataset)
+        return self.len
     
     def __getitem__(self, i):
-        item = self.dataset[i]
+        i_chunk = bisect_right(self.chunk_beginnings, x=i)
+        tmp = [0] + self.chunk_beginnings
+        idx_within_chunk = i - self.chunk_beginnings[i_chunk]
+
+        dia = self._get_item(self.dia_chunk_names, i_chunk, idx_within_chunk)
+        services = self._get_item(self.services_chunk_names, i_chunk, idx_within_chunk)
         
-        services = item['services']
-        target = torch.tensor([int(serv in services) for serv in self.services])    # multi one hot
-        
-        uts = item['utterance']
-        speakers = item['speaker']
-        dia = [{'utterance': ut, 'speaker': sp} for ut, sp in zip(uts, speakers)]
+        target = torch.tensor([float(serv in services) for serv in self.services])    # multi one hot
         
         return dia, target
+    
+    def _get_item(self, names, i_chunk, idx_within_chunk):
+        path_to_chunk = os.path.join(self.path, names[i_chunk])
+        chunk = json.load(open(path_to_chunk, 'r'))
+        return chunk[idx_within_chunk]
 
 
 @dataclass
@@ -96,7 +123,7 @@ class LearnerConfig:
     betas: Tuple[float, float] = (0.9, 0.999)
     k: int = 5
     t: float = 0.05
-    loss: Literal['contrastive', 'ict', 'multiwoz_service_clf']
+    loss: Literal['contrastive', 'ict', 'multiwoz_service_clf'] = 'contrastive'
 
 
 class Learner(pl.LightningModule):
@@ -104,6 +131,10 @@ class Learner(pl.LightningModule):
         super().__init__()
         self.model = model
         self.config = config
+
+        # list of (embedding, target) pairs for multiwoz service clf (as validation)
+        self.multiwoz_train = []
+        self.multiwoz_validation = []
 
         if self.config.loss == 'multiwoz_service_clf':
             self.clf_head = nn.Linear(self.model.get_hidden_size(), 7)
@@ -180,19 +211,6 @@ class Learner(pl.LightningModule):
 
         return loss, metric
 
-    def _multiwoz_service_clf_val(self, batch):
-        """`batch` is a list of samples from MultiWOZServiceClfDataset"""
-        dialogues = [dia for dia, _ in batch]
-        targets = torch.stack([tar for _, tar in batch], dim=0)
-        
-        embeddings = self.model(dialogues)  # (B, H)
-        logits = self.clf_head(embeddings)  # (B, 7)
-        
-        loss = F.binary_cross_entropy_with_logits(logits, targets, reduction='mean')
-        metric = multilabel_f1_score(logits, targets, average='macro')
-
-        return loss, metric
-
     def training_step(self, batch, batch_idx):
         loss, metric = self.forward(batch)
         self.log(
@@ -215,17 +233,20 @@ class Learner(pl.LightningModule):
         )
         return loss
     
-    def validation_step(self, batch, batch_idx):
-        loss, metric = self.forward(batch)
-        self.log(
-            name='val_loss',
-            value=loss,
-            prog_bar=False,
-            logger=True,
-            on_step=False,
-            on_epoch=True,
-            batch_size=self.config.batch_size
-        )
+    def validation_step(self, batch, batch_idx, dataloader_idx):
+        dialogues = [dia for dia, _ in batch]
+        targets = torch.stack([tar for _, tar in batch], dim=0).detach().cpu().numpy()
+        embeddings = self.model(dialogues).detach().cpu().numpy()
+        res = list(zip(embeddings, targets))
+        
+        if dataloader_idx == 0:
+            self.multiwoz_train.extend(res)
+        elif dataloader_idx == 1:
+            self.multiwoz_validation.extend(res)
+    
+    def on_validation_epoch_end(self):
+        metric = get_multiwoz_service_clf_score(self.multiwoz_train, self.multiwoz_validation)
+
         self.log(
             name='val_metric',
             value=metric,
@@ -233,9 +254,9 @@ class Learner(pl.LightningModule):
             logger=True,
             on_step=False,
             on_epoch=True,
-            batch_size=self.config.batch_size
+            # batch_size=self.config.batch_size
         )
-    
+
     def on_train_start(self):
         optim_hparams = self.optimizers().defaults
         model_hparams = self.model.get_hparams()
@@ -296,14 +317,111 @@ class Learner(pl.LightningModule):
         return {"optimizer": optimizer, "lr_scheduler": {"scheduler": scheduler, "interval": "step", 'frequency': 1}}
 
 
-class LinearProbeClf(nn.Module):
-    def __init__(self, input_size, output_size):
-        self.clf = nn.Linear(input_size, output_size)
+def get_multiwoz_service_clf_score(train_dataset, val_dataset):
+    emb, tar = train_dataset[0]
+    input_size = len(emb)
+    n_classes = len(tar)
+    
+    learner = LinearProbeClf(input_size, n_classes)
+
+    trainer = pl.Trainer(
+        max_epochs=2,
+        # max_time={'hours': 24},
+        
+        # max_time={'minutes': 5},
+        # max_steps=0,
+
+        # hardware settings
+        accelerator='gpu',
+        deterministic=False,
+        precision="16-mixed",
+
+        # logging and checkpointing
+        # val_check_interval=args.interval,
+        # check_val_every_n_epoch=1,
+        # logger=logger,
+        enable_progress_bar=False,
+        profiler=None,
+        # callbacks=[checkpoint_callback, lr_monitor],
+        # log_every_n_steps=args.interval,
+
+        # check if model is implemented correctly
+        overfit_batches=False,
+
+        # check training_step and validation_step doesn't fail
+        fast_dev_run=False,
+        num_sanity_val_steps=False,
+    )
+
+    def collate_fn(batch):
+        embeddings = np.stack([emb for emb, _ in batch], axis=0)
+        targets = np.stack([tar for _, tar in batch], axis=0)
+
+        embeddings = torch.from_numpy(embeddings)
+        targets = torch.from_numpy(targets)
+
+        embeddings.requires_grad_(True)
+        targets.requires_grad_(True)
+        
+        return embeddings, targets
+        
+
+    train_loader = DataLoader(
+        dataset=train_dataset,
+        batch_size=32,
+        shuffle=False,
+        num_workers=3,
+        collate_fn=collate_fn
+    )
+    val_loader = DataLoader(
+        dataset=val_dataset,
+        batch_size=32,
+        shuffle=False,
+        num_workers=3,
+        collate_fn=collate_fn
+    )
+
+    trainer.fit(learner, train_loader)
+    score = trainer.validate(learner, val_loader)[0]['result']
+
+    return score
+
+
+class LinearProbeClf(pl.LightningModule):
+    def __init__(self, input_size, n_classes):
+        super().__init__()
+
+        self.clf = nn.Linear(input_size, n_classes)
+
+        self.validation_steps_logits = []
+        self.validation_steps_targets = []
     
     def forward(self, embeddings, targets):
         logits = self.clf(embeddings)
+        print(logits.requires_grad, targets.requires_grad)
         loss = F.binary_cross_entropy_with_logits(logits, targets, reduction='mean')
         return loss
+    
+    def training_step(self, batch, batch_idx):
+        embeddings, targets = batch
+        return self.forward(embeddings, targets)
+    
+    def validation_step(self, batch, batch_idx):
+        embeddings, targets = batch
+        logits = self.clf(embeddings)  # (B, 7)
+        
+        self.validation_steps_logits.append(logits)
+        self.validation_steps_targets.append(targets)
+
+    def on_validation_epoch_end(self):
+        logits = torch.concat(self.validation_steps_logits, dim=0)
+        targets = torch.concat(self.validation_steps_targets, dim=0)
+        num_labels = targets.shape[1]
+        metric = multilabel_f1_score(logits, targets, num_labels=num_labels, average='macro')
+        self.log(name='result', value=metric)
+    
+    def configure_optimizers(self):
+        return AdamW(self.clf.parameters(), lr=5e-4)
 
 
 class LightningCkptLoadable:
@@ -323,5 +441,3 @@ def freeze_hf_model(hf_model, finetune_layers):
     n_layers = hf_model.config.num_hidden_layers
     for i in range(n_layers):
         hf_model.encoder.layer[i].requires_grad_(i>=n_layers-finetune_layers)
-        
-
