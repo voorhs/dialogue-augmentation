@@ -252,6 +252,8 @@ class Learner(pl.LightningModule):
         model_hparams['batch size'] = self.config.batch_size
         model_hparams['warmup period'] = self.config.warmup_period
         model_hparams['do periodic warmup'] = self.config.do_periodic_warmup
+        model_hparams['k'] = self.config.k
+        model_hparams['t'] = self.config.t
         model_hparams.update(self.config.kwargs)
         self.logger.log_hyperparams(model_hparams)
 
