@@ -1145,7 +1145,7 @@ if __name__ == "__main__":
         augmenter = PairwiseShuffler(device='cuda')
         exit()
     
-    for chunk in tqdm(json_chunks[:80]):
+    for chunk in tqdm(json_chunks[80:]):
         dialogues = json.load(open(os.path.join(args.path_in, chunk), 'r'))
         clean_dialogues = [dia for dia in dialogues if dia is not None]
         augmented = augmenter.from_argument(clean_dialogues)

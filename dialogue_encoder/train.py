@@ -2,20 +2,20 @@ if __name__ == "__main__":
     import torch
     torch.set_float32_matmul_precision('medium')    
 
-    # import argparse
-    # ap = argparse.ArgumentParser()
-    # ap.add_argument('--name', dest='name', default=None)
-    # ap.add_argument('--cuda', dest='cuda', default='0')
-    # ap.add_argument('--interval', dest='interval', required=True, type=int)
-    # args = ap.parse_args()
+    import argparse
+    ap = argparse.ArgumentParser()
+    ap.add_argument('--name', dest='name', default=None)
+    ap.add_argument('--cuda', dest='cuda', default='0')
+    ap.add_argument('--interval', dest='interval', required=True, type=int)
+    args = ap.parse_args()
 
-    from dataclasses import dataclass
-    @dataclass
-    class Args:
-        name = None
-        cuda = '2'
-        interval = 100
-    args = Args()
+    # from dataclasses import dataclass
+    # @dataclass
+    # class Args:
+    #     name = None
+    #     cuda = '2'
+    #     interval = 100
+    # args = Args()
 
     import os
     os.environ['TOKENIZERS_PARALLELISM'] = 'false'
@@ -54,11 +54,11 @@ if __name__ == "__main__":
     dir = '/home/alekseev_ilya/dialogue-augmentation/dialogue_encoder/multiwoz_truncated'
     multiwoz_train = MultiWOZServiceClfDataset(
         path=f'{dir}/train',
-        fraction=0.1
+        fraction=1.
     )
     multiwoz_val = MultiWOZServiceClfDataset(
         path=f'{dir}/validation',
-        fraction=0.2
+        fraction=1.
     )
 
     from torch.utils.data import DataLoader
@@ -126,7 +126,7 @@ if __name__ == "__main__":
         precision="16-mixed",
 
         # logging and checkpointing
-        val_check_interval=args.interval,
+        # val_check_interval=args.interval,
         # check_val_every_n_epoch=1,
         logger=logger,
         enable_progress_bar=False,
@@ -147,12 +147,12 @@ if __name__ == "__main__":
     from datetime import datetime
     print('Started at', datetime.now().strftime("%H:%M:%S %d-%m-%Y"))
 
-    trainer.validate(learner, [multiwoz_train_loader, multiwoz_val_loader],)
+    # trainer.validate(learner, [multiwoz_train_loader, multiwoz_val_loader],)
 
     # do magic!
-    # trainer.fit(
-    #     learner, train_loader, [multiwoz_train_loader, multiwoz_val_loader],
-    #     # ckpt_path='/home/alekseev_ilya/dialogue-augmentation/nup/logs/training/listwise-clf/checkpoints/last.ckpt'
-    # )
+    trainer.fit(
+        learner, train_loader, [multiwoz_train_loader, multiwoz_val_loader],
+        # ckpt_path='/home/alekseev_ilya/dialogue-augmentation/nup/logs/training/listwise-clf/checkpoints/last.ckpt'
+    )
 
     print('Finished at', datetime.now().strftime("%H:%M:%S %d-%m-%Y"))

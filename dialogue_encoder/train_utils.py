@@ -11,12 +11,12 @@ from torch.optim.lr_scheduler import LambdaLR
 import torch.nn as nn
 import torch
 from typing import Literal
-from datasets import load_dataset
 import torch.nn.functional as F
 from torchmetrics.functional.classification import multilabel_f1_score
 from torch.utils.data import DataLoader
-from lightning.pytorch.callbacks import ModelCheckpoint
 import math
+from sklearn.neural_network import MLPClassifier
+from sklearn.metrics import f1_score
 
 
 class ContrastiveDataset(Dataset):
@@ -58,7 +58,8 @@ class ContrastiveDataset(Dataset):
         }
         ```"""
         i_chunk = bisect_right(self.chunk_beginnings, x=i)
-        idx_within_chunk = i - self.chunk_beginnings[i_chunk]
+        tmp = [0] + self.chunk_beginnings
+        idx_within_chunk = i -  tmp[i_chunk]
         item = json.load(open(os.path.join(self.path, self.chunk_names[i_chunk]), 'r'))[idx_within_chunk]
         return item
 
@@ -97,7 +98,7 @@ class MultiWOZServiceClfDataset(Dataset):
     def __getitem__(self, i):
         i_chunk = bisect_right(self.chunk_beginnings, x=i)
         tmp = [0] + self.chunk_beginnings
-        idx_within_chunk = i - self.chunk_beginnings[i_chunk]
+        idx_within_chunk = i - tmp[i_chunk]
 
         dia = self._get_item(self.dia_chunk_names, i_chunk, idx_within_chunk)
         services = self._get_item(self.services_chunk_names, i_chunk, idx_within_chunk)
@@ -238,14 +239,27 @@ class Learner(pl.LightningModule):
         targets = torch.stack([tar for _, tar in batch], dim=0).detach().cpu().numpy()
         embeddings = self.model(dialogues).detach().cpu().numpy()
         res = list(zip(embeddings, targets))
-        
+
         if dataloader_idx == 0:
             self.multiwoz_train.extend(res)
         elif dataloader_idx == 1:
             self.multiwoz_validation.extend(res)
     
-    def on_validation_epoch_end(self):
-        metric = get_multiwoz_service_clf_score(self.multiwoz_train, self.multiwoz_validation)
+    def on_train_start(self):        
+        optim_hparams = self.optimizers().defaults
+        model_hparams = self.model.get_hparams()
+        model_hparams.update(optim_hparams)
+        model_hparams['batch size'] = self.config.batch_size
+        model_hparams['warmup period'] = self.config.warmup_period
+        model_hparams['do periodic warmup'] = self.config.do_periodic_warmup
+        model_hparams.update(self.config.kwargs)
+        self.logger.log_hyperparams(model_hparams)
+
+    def on_validation_epoch_end(self) -> None:
+        metric = get_multiwoz_service_clf_score_sklearn(
+            self.multiwoz_train,
+            self.multiwoz_validation
+        )
 
         self.log(
             name='val_metric',
@@ -257,15 +271,8 @@ class Learner(pl.LightningModule):
             # batch_size=self.config.batch_size
         )
 
-    def on_train_start(self):
-        optim_hparams = self.optimizers().defaults
-        model_hparams = self.model.get_hparams()
-        model_hparams.update(optim_hparams)
-        model_hparams['batch size'] = self.config.batch_size
-        model_hparams['warmup period'] = self.config.warmup_period
-        model_hparams['do periodic warmup'] = self.config.do_periodic_warmup
-        model_hparams.update(self.config.kwargs)
-        self.logger.log_hyperparams(model_hparams)
+        self.multiwoz_train.clear()
+        self.multiwoz_validation.clear()
 
     def configure_optimizers(self):
         """Taken from https://github.com/karpathy/minGPT/blob/3ed14b2cec0dfdad3f4b2831f2b4a86d11aef150/mingpt/model.py#L136"""
@@ -317,42 +324,40 @@ class Learner(pl.LightningModule):
         return {"optimizer": optimizer, "lr_scheduler": {"scheduler": scheduler, "interval": "step", 'frequency': 1}}
 
 
-def get_multiwoz_service_clf_score(train_dataset, val_dataset):
+def get_multiwoz_service_clf_score_sklearn(train_dataset, val_dataset, n_epochs=2):
+    # configure model
+    clf = MLPClassifier(
+        batch_size=32,
+        learning_rate_init=5e-4,
+        max_iter=n_epochs
+    )
+
+    # configure data
+    X_train = np.stack([emb for emb, _ in train_dataset], axis=0)
+    y_train = np.stack([tar for _, tar in train_dataset], axis=0)
+    X_val = np.stack([emb for emb, _ in val_dataset], axis=0)
+    y_val = np.stack([tar for _, tar in val_dataset], axis=0)
+    
+    # train model
+    clf.fit(X_train, y_train)
+
+    # score model
+    y_pred = clf.predict(X_val)
+    score = f1_score(y_val, y_pred, average='macro', zero_division=0)
+    
+    return score
+
+
+def get_multiwoz_service_clf_score_torch(train_dataset, val_dataset, device, n_epochs=2):
+    # === configure model ===
     emb, tar = train_dataset[0]
     input_size = len(emb)
     n_classes = len(tar)
     
-    learner = LinearProbeClf(input_size, n_classes)
+    learner = LinearProbeClf(input_size, n_classes).to(device)
+    optimizer = learner.configure_optimizers()
 
-    trainer = pl.Trainer(
-        max_epochs=2,
-        # max_time={'hours': 24},
-        
-        # max_time={'minutes': 5},
-        # max_steps=0,
-
-        # hardware settings
-        accelerator='gpu',
-        deterministic=False,
-        precision="16-mixed",
-
-        # logging and checkpointing
-        # val_check_interval=args.interval,
-        # check_val_every_n_epoch=1,
-        # logger=logger,
-        enable_progress_bar=False,
-        profiler=None,
-        # callbacks=[checkpoint_callback, lr_monitor],
-        # log_every_n_steps=args.interval,
-
-        # check if model is implemented correctly
-        overfit_batches=False,
-
-        # check training_step and validation_step doesn't fail
-        fast_dev_run=False,
-        num_sanity_val_steps=False,
-    )
-
+    # === configure data ===
     def collate_fn(batch):
         embeddings = np.stack([emb for emb, _ in batch], axis=0)
         targets = np.stack([tar for _, tar in batch], axis=0)
@@ -360,12 +365,11 @@ def get_multiwoz_service_clf_score(train_dataset, val_dataset):
         embeddings = torch.from_numpy(embeddings)
         targets = torch.from_numpy(targets)
 
-        embeddings.requires_grad_(True)
-        targets.requires_grad_(True)
+        embeddings.requires_grad_(False)
+        targets.requires_grad_(False)
         
         return embeddings, targets
         
-
     train_loader = DataLoader(
         dataset=train_dataset,
         batch_size=32,
@@ -381,13 +385,30 @@ def get_multiwoz_service_clf_score(train_dataset, val_dataset):
         collate_fn=collate_fn
     )
 
-    trainer.fit(learner, train_loader)
-    score = trainer.validate(learner, val_loader)[0]['result']
+    # === train ===
+    for i_epoch in range(n_epochs):
+        for i_batch, batch in enumerate(train_loader):
+            embeddings = batch[0].to(device)
+            targets = batch[1].to(device)
 
+            optimizer.zero_grad()
+            loss = learner(embeddings, targets)
+
+            loss.backward()
+            optimizer.step()
+
+    # === validate ===
+    for i_batch, batch in enumerate(val_loader):
+        embeddings = batch[0].to(device)
+        targets = batch[1].to(device)
+
+        learner.validation_step((embeddings, targets), i_batch)
+    
+    score = learner.on_validation_epoch_end()
     return score
 
 
-class LinearProbeClf(pl.LightningModule):
+class LinearProbeClf(nn.Module):
     def __init__(self, input_size, n_classes):
         super().__init__()
 
@@ -402,9 +423,9 @@ class LinearProbeClf(pl.LightningModule):
         loss = F.binary_cross_entropy_with_logits(logits, targets, reduction='mean')
         return loss
     
-    def training_step(self, batch, batch_idx):
-        embeddings, targets = batch
-        return self.forward(embeddings, targets)
+    # def training_step(self, batch, batch_idx):
+    #     embeddings, targets = batch
+    #     return self.forward(embeddings, targets)
     
     def validation_step(self, batch, batch_idx):
         embeddings, targets = batch
@@ -418,10 +439,11 @@ class LinearProbeClf(pl.LightningModule):
         targets = torch.concat(self.validation_steps_targets, dim=0)
         num_labels = targets.shape[1]
         metric = multilabel_f1_score(logits, targets, num_labels=num_labels, average='macro')
-        self.log(name='result', value=metric)
+        # self.log(name='result', value=metric)
+        return metric.cpu().item()
     
     def configure_optimizers(self):
-        return AdamW(self.clf.parameters(), lr=5e-4)
+        return AdamW(self.parameters(), lr=5e-4)
 
 
 class LightningCkptLoadable:
