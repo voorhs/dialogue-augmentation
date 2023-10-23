@@ -1,9 +1,5 @@
 VENV/
-VENV2/
-nup/dialogues
-nup/pairs
 logs
-*__pycache__*
-*-data
+__pycache__
+data
 .*
-*.json
