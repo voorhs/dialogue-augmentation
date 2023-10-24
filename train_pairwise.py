@@ -149,7 +149,7 @@ if __name__ == "__main__":
     from torch.utils.data import DataLoader
 
     train_loader = DataLoader(
-        dataset=ContextResponseDataset(path, 'train', fraction=1),
+        dataset=ContextResponseDataset(path, 'train', fraction=learner_config.train_fraction),
         batch_size=learner_config.batch_size,
         shuffle=False,
         num_workers=3,
@@ -157,7 +157,7 @@ if __name__ == "__main__":
     )
 
     val_loader = DataLoader(
-        dataset=ContextResponseDataset(path, 'val', fraction=1),
+        dataset=ContextResponseDataset(path, 'val', fraction=learner_config.val_fraction),
         batch_size=learner_config.batch_size,
         shuffle=False,
         num_workers=3,
