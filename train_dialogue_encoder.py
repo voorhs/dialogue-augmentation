@@ -45,7 +45,7 @@ if __name__ == "__main__":
 
     from mylib.utils.data import ContrastiveDataset, MultiWOZServiceClfDataset
     contrastive_train = ContrastiveDataset(os.path.join(contrastive_path, 'train'))
-    contrastive_val = ContrastiveDataset(os.path.join(contrastive_path, 'val'))
+    # contrastive_val = ContrastiveDataset(os.path.join(contrastive_path, 'val'))
     
     multiwoz_train = MultiWOZServiceClfDataset(
         path=os.path.join(multiwoz_path, 'train'),
@@ -67,13 +67,13 @@ if __name__ == "__main__":
         collate_fn=collate_fn,
         drop_last=True
     )
-    contrastive_val_loader = DataLoader(
-        dataset=contrastive_val,
-        batch_size=learner_config.batch_size,
-        shuffle=False,
-        num_workers=3,
-        collate_fn=collate_fn
-    )
+    # contrastive_val_loader = DataLoader(
+    #     dataset=contrastive_val,
+    #     batch_size=learner_config.batch_size,
+    #     shuffle=False,
+    #     num_workers=3,
+    #     collate_fn=collate_fn
+    # )
     multiwoz_train_loader = DataLoader(
         dataset=multiwoz_train,
         batch_size=learner_config.batch_size,
