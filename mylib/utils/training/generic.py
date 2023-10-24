@@ -104,24 +104,31 @@ def train(learner, train_loader, val_loader, args):
     from lightning.pytorch.callbacks import ModelCheckpoint, LearningRateMonitor
     import os
 
-    checkpoint_callback = ModelCheckpoint(
-        monitor='val_metric',
-        save_last=True,
-        save_top_k=1,
-        mode='max',
-    )
-    lr_monitor = LearningRateMonitor(logging_interval='step')
+    if args.logger != 'none':
+        checkpoint_callback = ModelCheckpoint(
+            monitor='val_metric',
+            save_last=True,
+            save_top_k=1,
+            mode='max',
+        )
+        lr_monitor = LearningRateMonitor(logging_interval='step')
+        callbacks = [checkpoint_callback, lr_monitor]
+    else:
+        callbacks = None
 
     import lightning.pytorch as pl
     if args.logger == 'tb':
         Logger = pl.loggers.TensorBoardLogger
+        suffix = 'tensorboad'
     elif args.logger == 'wb':
         Logger = pl.loggers.WandbLogger
+        suffix = 'wandb'
     elif args.logger == 'none':
         Logger = lambda **kwargs: False
+        suffix = ''
     
     logger = Logger(
-        save_dir=os.path.join(os.getcwd(), 'logs'),
+        save_dir=os.path.join(os.environ['REPO_DIR'], 'logs', suffix),
         name=args.name
     )
 
@@ -143,15 +150,15 @@ def train(learner, train_loader, val_loader, args):
         logger=logger,
         enable_progress_bar=False,
         profiler=None,
-        callbacks=[checkpoint_callback, lr_monitor],
+        callbacks=callbacks,
         # log_every_n_steps=5,
 
         # check if model is implemented correctly
         overfit_batches=False,
 
         # check training_step and validation_step doesn't fail
-        fast_dev_run=False,
-        num_sanity_val_steps=False
+        fast_dev_run=3,
+        num_sanity_val_steps=3
     )
 
     if args.resume_from is None:
@@ -175,7 +182,7 @@ def get_argparser():
     ap = argparse.ArgumentParser()
     ap.add_argument('--name', dest='name', default=None)
     ap.add_argument('--cuda', dest='cuda', default='0')
-    ap.add_argument('--seed', dest='seed', default=0)
+    ap.add_argument('--seed', dest='seed', default=0, type=int)
     ap.add_argument('--interval', dest='interval', required=True, type=int)
     ap.add_argument('--logger', dest='logger', choices=['none', 'tb', 'wb'], default='none')
     ap.add_argument('--resume-training-from', dest='resume_from', default=None)

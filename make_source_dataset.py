@@ -36,11 +36,17 @@ if __name__ == "__main__":
     from transformers import AutoTokenizer
     from collections import defaultdict
     from mylib.utils.data.source_dataset import parse_dataset, train_test_split, save_as_chunks
-    from tqdm import tqdm
-    from random import shuffle
+    from mylib.utils.data.pairs_dataset import make_pairs
+    from mylib.utils.training import seed_everything
 
+    seed_everything(0)
+
+    # supress warnings about long sequences
+    import logging
+    logging.getLogger("transformers.tokenization_utils_base").setLevel(logging.ERROR)
+    
     #! not the same as roberta, replace in future
-    tokenizer = AutoTokenizer.from_pretrained('microsoft/mpnet-base', max_length=10000)
+    tokenizer = AutoTokenizer.from_pretrained('microsoft/mpnet-base')
 
     # load datasets from hugging face, parse, filter and merge into single list
     merged_dataset = []
@@ -56,7 +62,7 @@ if __name__ == "__main__":
 
     # save splits to file system as json chunks ('mylib/data/train/source')
     import os
-    root_dir = os.environ['ROOT_DIR_REPO']
+    root_dir = os.environ['REPO_DIR']
     save_path = os.path.join(root_dir, 'mylib/data/train/source')
 
     for split, data in dialogues.items():
@@ -70,15 +76,7 @@ if __name__ == "__main__":
     save_path = os.path.join(root_dir, 'mylib/data/train/context-response-pairs')
     nsp_dataset = defaultdict(list)
     for split in ['train', 'test', 'val']:
-        for dia in tqdm(dialogues[split], desc=f'making pairs for {split}'):
-            pairs = []
-            for i in range(len(dia)-1):
-                pairs.append({
-                    'context': dia[:i+1],
-                    'target': dia[i+1]
-                })
-            nsp_dataset[split].extend(pairs)
-        shuffle(nsp_dataset[split])
+        nsp_dataset[split] = make_pairs(dialogues[split])
         print(split, len(nsp_dataset[split]))
 
     # save as chunks

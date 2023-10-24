@@ -141,11 +141,15 @@ if __name__ == "__main__":
     def collate_fn(batch):
         return batch
     
-    from mylib.utils.training.pairwise import NUPDataset
+    import os
+    root_dir = os.environ['REPO_DIR']
+    path = os.path.join(root_dir, 'mylib/data/train/context-response-pairs')
+
+    from mylib.utils.data.pairs_dataset import ContextResponseDataset
     from torch.utils.data import DataLoader
 
     train_loader = DataLoader(
-        dataset=NUPDataset('.', 'train', fraction=1.),
+        dataset=ContextResponseDataset(path, 'train', fraction=1),
         batch_size=learner_config.batch_size,
         shuffle=False,
         num_workers=3,
@@ -153,7 +157,7 @@ if __name__ == "__main__":
     )
 
     val_loader = DataLoader(
-        dataset=NUPDataset('.', 'val', fraction=.2),
+        dataset=ContextResponseDataset(path, 'val', fraction=1),
         batch_size=learner_config.batch_size,
         shuffle=False,
         num_workers=3,

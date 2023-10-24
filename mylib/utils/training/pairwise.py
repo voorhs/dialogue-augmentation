@@ -1,76 +1,7 @@
-from torch.utils.data import Dataset
-from typing import Any, Literal, Tuple
-import math
-import json
 from dataclasses import dataclass
-import torch.nn as nn
 from torch.optim import AdamW
 from torch.optim.lr_scheduler import LambdaLR
 from .generic import BaseLearner, BaseLearnerConfig
-
-
-class NUPDataset(Dataset):
-    chunk_size = 2048
-    def __init__(self, path, split: Literal['train', 'test', 'val'], fraction=1.):
-        self.split = split
-        self.path = path
-
-        if split == 'train':
-            max_n_chunks = 2556
-        elif split == 'test' or split == 'val':
-            max_n_chunks = 141
-
-        if isinstance(fraction, float):
-            self.fraction = min(1., max(0., fraction))
-            self.n_chunks = math.ceil(self.fraction * max_n_chunks)
-        elif isinstance(fraction, int):
-            self.fraction = min(max_n_chunks, max(1, fraction))
-            self.n_chunks = fraction
-        else:
-            raise ValueError('fraction must be int or float')
-
-        self.len = self.n_chunks * self.chunk_size
-    
-    def __len__(self):
-        return self.len
-    
-    def __getitem__(self, i):
-        """
-        Loads one chunk and returns one dialogue, represented with an object of the following schema:
-        ```
-        {
-            "type": "object",
-            "properties":
-            {
-                "context":
-                {
-                    "type": "array",
-                    "items":
-                    {
-                        "type": "object",
-                        "properties":
-                        {
-                            "utterance": {"type": "string"},
-                            "speaker": {"type": "number"}
-                        }
-                    }
-                },
-                "target":
-                {
-                    "type": "object",
-                    "properties":
-                    {
-                        "utterance": {"type": "string"},
-                        "speaker": {"type": "number"}
-                    }
-                }
-            }
-        }
-        ```"""
-        i_chunk = math.floor(i / self.chunk_size)
-        idx_within_chunk = i % self.chunk_size
-        item = json.load(open(f'{self.path}/pairs/{self.split}/{i_chunk}.json', 'r'))[idx_within_chunk]
-        return item
 
 
 @dataclass
