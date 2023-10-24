@@ -54,4 +54,3 @@ class MultiWOZServiceClfDataset(Dataset):
         path_to_chunk = os.path.join(self.path, names[i_chunk])
         chunk = json.load(open(path_to_chunk, 'r'))
         return chunk[idx_within_chunk]
-

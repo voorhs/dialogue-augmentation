@@ -128,7 +128,7 @@ def train(learner, train_loader, val_loader, args):
         suffix = ''
     
     logger = Logger(
-        save_dir=os.path.join(os.environ['REPO_DIR'], 'logs', suffix),
+        save_dir=os.path.join(os.environ['ROOT_DIR'], 'logs', suffix),
         name=args.name
     )
 

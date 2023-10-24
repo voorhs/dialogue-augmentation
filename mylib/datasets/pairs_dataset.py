@@ -1,71 +1,9 @@
-from .source_dataset import Dialogue
-from pprint import pformat
-from tqdm import tqdm
-from random import shuffle
 from torch.utils.data import Dataset
-from typing import Literal, Union
+from typing import Literal
 import math
 import json
 import os
-
-
-class ContextResponsePair:
-    def __init__(
-            self,
-            context: Union[Dialogue, dict],
-            response: Union[Dialogue, dict],
-            idx: int = None,
-            **fields
-        ):
-        """add any extra `fields` if extra info is needed to be saved"""
-
-        if isinstance(context, Dialogue) and isinstance(response, Dialogue):
-            self.content = {
-                'context': context.content,
-                'response': response.content
-            }
-            self.idx_within_source = context.idx_within_source
-            self.idx = idx
-        elif isinstance(context, dict) and isinstance(response, dict):
-            self.content = {
-                'context': context,
-                'response': response
-            }
-        else:
-            raise ValueError(f'context and response must be the same data type, got {type(context)} and {type(response)}')
-        
-        for key, val in fields.items():
-            setattr(self, key, val)
-    
-    def asdict(self):
-        return vars(self)
-    
-    def __repr__(self):
-        return pformat(self.asdict(), indent=2)
-    
-    @staticmethod
-    def from_dict(dct):
-        return ContextResponsePair(
-            context=dct['content']['context'],
-            response=dct['content']['response'],
-        )
-    
-    @staticmethod
-    def get_train_sample(dct):
-        return dct['content']
-
-
-
-def make_pairs(dialogues):
-    res = []
-    for dia in tqdm(dialogues, desc='making pairs'):
-        pairs = []
-        for i in range(len(dia)-1):
-            pairs.append((dia[:i+1], dia[i+1]))
-        res.extend(pairs)
-    shuffle(res)
-    res = [ContextResponsePair(context=c, response=r, idx=i) for i, (c, r) in enumerate(res)]
-    return res
+from ..utils.data import ContextResponsePair
 
 
 class ContextResponseDataset(Dataset):

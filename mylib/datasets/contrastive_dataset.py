@@ -48,5 +48,3 @@ class ContrastiveDataset(Dataset):
         idx_within_chunk = i -  tmp[i_chunk]
         item = json.load(open(os.path.join(self.path, self.chunk_names[i_chunk]), 'r'))[idx_within_chunk]
         return item
-
-

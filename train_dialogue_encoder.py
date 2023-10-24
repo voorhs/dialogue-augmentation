@@ -39,7 +39,7 @@ if __name__ == "__main__":
     # ======= DEFINE DATA =======
 
     import os
-    root_dir = os.environ['REPO_DIR']
+    root_dir = os.environ['ROOT_DIR']
     contrastive_path = os.path.join(root_dir, 'data', 'train', 'dialogue-encoder', 'contrastive')
     multiwoz_path = os.path.join(root_dir, 'data', 'train', 'dialogue-encoder', 'multiwoz')
 

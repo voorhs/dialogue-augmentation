@@ -1,19 +1,19 @@
 original_path = '/home/alekseev_ilya/dialogue-augmentation/dialogue_encoder/original'
 
-negative_paths = [
-    '/home/alekseev_ilya/dialogue-augmentation/dialogue_encoder/augmented/replace',
-    '/home/alekseev_ilya/dialogue-augmentation/dialogue_encoder/augmented/replace-cut',
+negative_names = [
+    'replace',
+    'replace-orune',
 ]
 
-positive_paths = [
-    '/home/alekseev_ilya/dialogue-augmentation/dialogue_encoder/augmented/back-translate',
-    '/home/alekseev_ilya/dialogue-augmentation/dialogue_encoder/augmented/back-translate-cut',
-    '/home/alekseev_ilya/dialogue-augmentation/dialogue_encoder/augmented/back-translate-shuffle',
-    '/home/alekseev_ilya/dialogue-augmentation/dialogue_encoder/augmented/cut-insert',
-    '/home/alekseev_ilya/dialogue-augmentation/dialogue_encoder/augmented/insert',
-    '/home/alekseev_ilya/dialogue-augmentation/dialogue_encoder/augmented/pairwise-shuffler',
-    '/home/alekseev_ilya/dialogue-augmentation/dialogue_encoder/augmented/pairwise-cutter',
-    '/home/alekseev_ilya/dialogue-augmentation/dialogue_encoder/augmented/shuffle-insert',
+positive_names = [
+    'back-translate',
+    'back-translate-prune',
+    'back-translate-shuffle',
+    'prune-insert',
+    'insert',
+    'shuffle',
+    'prune',
+    'shuffle-insert',
 ]
 
 res_path = '/home/alekseev_ilya/dialogue-augmentation/dialogue_encoder/dataset/train'
@@ -45,14 +45,14 @@ def validate(paths):
         if any(name1 != name2 for name1, name2 in zip(all_chunk_names[0], chunk_names)):
             print('chunk names must match')
 
-validate(positive_paths + negative_paths + [original_path])
+validate(positive_names + negative_names + [original_path])
 
 # === generating dataset ===
 
 if not os.path.exists(res_path):
     os.makedirs(res_path)
 
-chunk_names = [filename for filename in os.listdir(positive_paths[0]) if filename.endswith('.json') and not filename.startswith('ru')]
+chunk_names = [filename for filename in os.listdir(positive_names[0]) if filename.endswith('.json') and not filename.startswith('ru')]
 chunk_names = sorted(chunk_names)[:N_CHUNKS]
 
 def read_chunk(paths, chunk_name):
@@ -75,8 +75,8 @@ def my_filter(dias, orig_joined):
 
 for chunk_name in tqdm(chunk_names, desc='generating dataset'):
     orig_chunk = read_chunk([original_path], chunk_name)
-    pos_chunk = read_chunk(positive_paths, chunk_name)
-    neg_chunk = read_chunk(negative_paths, chunk_name)
+    pos_chunk = read_chunk(positive_names, chunk_name)
+    neg_chunk = read_chunk(negative_names, chunk_name)
     
     res_chunk = []
     for orig_dia, pos_dias, neg_dias in zip(orig_chunk, pos_chunk, neg_chunk):

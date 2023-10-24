@@ -115,8 +115,8 @@ if __name__ == "__main__":
         return batch
     
     import os
-    root_dir = os.environ['REPO_DIR']
-    path = os.path.join(root_dir, 'data', 'train', 'source')
+    root_dir = os.environ['ROOT_DIR']
+    path = os.path.join(root_dir, 'data', 'source')
 
     from mylib.utils.data import DialogueDataset
     from torch.utils.data import DataLoader
