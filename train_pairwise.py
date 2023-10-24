@@ -143,9 +143,9 @@ if __name__ == "__main__":
     
     import os
     root_dir = os.environ['REPO_DIR']
-    path = os.path.join(root_dir, 'mylib/data/train/context-response-pairs')
+    path = os.path.join(root_dir, 'data', 'train', 'context-response-pairs')
 
-    from mylib.utils.data.pairs_dataset import ContextResponseDataset
+    from mylib.utils.data import ContextResponseDataset
     from torch.utils.data import DataLoader
 
     train_loader = DataLoader(

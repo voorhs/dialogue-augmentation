@@ -1,8 +1,4 @@
-from torch.utils.data import Dataset
-import os
-import json
 import numpy as np
-from bisect import bisect_right
 from dataclasses import dataclass
 from torch.optim import AdamW
 from torch.optim.lr_scheduler import LambdaLR
@@ -12,104 +8,9 @@ from typing import Literal
 import torch.nn.functional as F
 from torchmetrics.functional.classification import multilabel_f1_score
 from torch.utils.data import DataLoader
-import math
 from sklearn.neural_network import MLPClassifier
 from sklearn.metrics import f1_score
 from .generic import BaseLearnerConfig, BaseLearner
-
-
-class ContrastiveDataset(Dataset):
-    def __init__(self, path):
-        self.path = path
-        
-        chunk_names = [filename for filename in os.listdir(path) if filename.endswith('.json') and not filename.startswith('ru')]
-        self.chunk_names = sorted(chunk_names, key=lambda x: int(x.split('.')[0]))
-        chunk_sizes = [len(chunk) for chunk in (json.load(open(os.path.join(path, chunk_name))) for chunk_name in self.chunk_names)]
-        self.chunk_beginnings = np.cumsum(chunk_sizes).tolist()
-        
-        self.n_chunks = len(self.chunk_names)
-        self.len = self.chunk_beginnings[-1]
-    
-    def __len__(self):
-        return self.len
-    
-    def __getitem__(self, i):
-        """
-        Loads one chunk and returns one training sample as
-        {
-            'orig': dia,
-            'pos': list of dias,
-            'neg': list of dias
-        }
-        where each dia is represented with an object of the following schema:
-        ```
-        {
-            "type": "array",
-            "items":
-            {
-                "type": "object",
-                "properties":
-                {
-                    "utterance": {"type": "string"},
-                    "speaker": {"type": "number"}
-                }
-            }
-        }
-        ```"""
-        i_chunk = bisect_right(self.chunk_beginnings, x=i)
-        tmp = [0] + self.chunk_beginnings
-        idx_within_chunk = i -  tmp[i_chunk]
-        item = json.load(open(os.path.join(self.path, self.chunk_names[i_chunk]), 'r'))[idx_within_chunk]
-        return item
-
-
-class MultiWOZServiceClfDataset(Dataset):
-    def __init__(self, path, fraction=1.):
-        self.path = path
-        
-        dia_name_validator = lambda x: x.startswith('dia') and x.endswith('.json')
-        services_name_validator = lambda x: x.startswith('services') and x.endswith('.json')
-        number_extractor = lambda x: int(x.split('-')[1].split('.')[0])
-        
-        def get_names(name_validator):
-            chunk_names = [filename for filename in os.listdir(path) if name_validator(filename)]
-            return sorted(chunk_names, key=number_extractor)
-
-        self.dia_chunk_names = get_names(dia_name_validator)
-        self.services_chunk_names = get_names(services_name_validator)
-
-        size = math.ceil(len(self.dia_chunk_names) * fraction)
-        self.dia_chunk_names = self.dia_chunk_names[:size]
-        self.services_chunk_names = self.services_chunk_names[:size]
-
-        chunk_sizes = [len(chunk) for chunk in (json.load(open(os.path.join(path, chunk_name))) for chunk_name in self.dia_chunk_names)]
-        self.chunk_beginnings = np.cumsum(chunk_sizes).tolist()
-
-        self.services = [
-            'attraction', 'bus', 'hospital',
-            'hotel', 'restaurant', 'taxi', 'train'
-        ]
-        self.len = self.chunk_beginnings[-1]
-
-    def __len__(self):
-        return self.len
-    
-    def __getitem__(self, i):
-        i_chunk = bisect_right(self.chunk_beginnings, x=i)
-        tmp = [0] + self.chunk_beginnings
-        idx_within_chunk = i - tmp[i_chunk]
-
-        dia = self._get_item(self.dia_chunk_names, i_chunk, idx_within_chunk)
-        services = self._get_item(self.services_chunk_names, i_chunk, idx_within_chunk)
-        
-        target = torch.tensor([float(serv in services) for serv in self.services])    # multi one hot
-        
-        return dia, target
-    
-    def _get_item(self, names, i_chunk, idx_within_chunk):
-        path_to_chunk = os.path.join(self.path, names[i_chunk])
-        chunk = json.load(open(path_to_chunk, 'r'))
-        return chunk[idx_within_chunk]
 
 
 @dataclass
@@ -118,6 +19,9 @@ class DialogueEcoderLearnerConfig(BaseLearnerConfig):
     temperature: float = 0.05
     loss: Literal['contrastive', 'ict', 'multiwoz_service_clf'] = 'contrastive'
     finetune_layers: int = 0
+    contrastive_train_frac: float = 1.
+    multiwoz_train_frac: float = 1.
+    multiwoz_val_frac: float = 1.
 
 
 class DialogueEcoderLearner(BaseLearner):

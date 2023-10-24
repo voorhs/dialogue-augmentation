@@ -38,21 +38,22 @@ if __name__ == "__main__":
 
     # ======= DEFINE DATA =======
 
-    from mylib.utils.training.dialogue_encoder import ContrastiveDataset, MultiWOZServiceClfDataset
     import os
+    root_dir = os.environ['REPO_DIR']
+    contrastive_path = os.path.join(root_dir, 'data', 'train', 'dialogue-encoder', 'contrastive')
+    multiwoz_path = os.path.join(root_dir, 'data', 'train', 'dialogue-encoder', 'multiwoz')
 
-    path = os.path.join(os.getcwd(), 'src/mylib/data/train/dialogue-encoder/contrastive')
-    contrastive_train = ContrastiveDataset(os.path.join(path, 'train'))
-    contrastive_val = ContrastiveDataset(os.path.join(path, 'val'))
+    from mylib.utils.data import ContrastiveDataset, MultiWOZServiceClfDataset
+    contrastive_train = ContrastiveDataset(os.path.join(contrastive_path, 'train'))
+    contrastive_val = ContrastiveDataset(os.path.join(contrastive_path, 'val'))
     
-    dir = os.path.join(os.getcwd(), 'src/mylib/data/train/dialogue-encoder/multiwoz')
     multiwoz_train = MultiWOZServiceClfDataset(
-        path=f'{dir}/train',
-        fraction=1.
+        path=os.path.join(multiwoz_path, 'train'),
+        fraction=learner_config.multiwoz_train_frac
     )
     multiwoz_val = MultiWOZServiceClfDataset(
-        path=f'{dir}/validation',
-        fraction=1.
+        path=os.path.join(multiwoz_path, 'validation'),
+        fraction=learner_config.multiwoz_val_frac
     )
 
     from torch.utils.data import DataLoader
