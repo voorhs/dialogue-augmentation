@@ -57,6 +57,10 @@ class Dialogue:
         res.content = self.content[idx_or_slice]
         return res
 
+    @staticmethod
+    def get_train_sample(dct):
+        return dct['content']
+
 
 def parse_sample(
         raw_sample,
@@ -228,5 +232,5 @@ class DialogueDataset(Dataset):
         i_chunk = bisect_right(self.chunk_beginnings, x=i)
         tmp = [0] + self.chunk_beginnings
         idx_within_chunk = i - tmp[i_chunk]
-        item: Dialogue = json.load(open(os.path.join(self.path, self.chunk_names[i_chunk]), 'r'))[idx_within_chunk]
-        return item.content
+        item = json.load(open(os.path.join(self.path, self.chunk_names[i_chunk]), 'r'))[idx_within_chunk]
+        return Dialogue.get_train_sample(item)

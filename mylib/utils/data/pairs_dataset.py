@@ -51,7 +51,7 @@ class ContextResponsePair:
         )
     
     @staticmethod
-    def load_train_sample(dct):
+    def get_train_sample(dct):
         return dct['content']
 
 
@@ -133,4 +133,4 @@ class ContextResponseDataset(Dataset):
         chunk_path = os.path.join(self.path, self.split, chunk_name)
         dct = json.load(open(chunk_path, 'r'))[idx_within_chunk]
         
-        return ContextResponsePair.load_train_sample(dct)
+        return ContextResponsePair.get_train_sample(dct)

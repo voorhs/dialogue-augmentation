@@ -9,6 +9,8 @@ class PairwiseLearnerConfig(BaseLearnerConfig):
     k: int = 5
     finetune_layers: int = 3
     temperature: float = 0.05
+    train_fraction: float = 1.
+    val_fraction: float = 1.
 
 
 class PairwiseLearner(BaseLearner):
