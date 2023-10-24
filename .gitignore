@@ -1,5 +1,5 @@
 VENV/
 logs
 *__pycache__
-src/mylib/data
+mylib/data
 .*

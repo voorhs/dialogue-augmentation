@@ -3,7 +3,6 @@ from torch import nn
 import torch
 import torch.nn.functional as F
 from .ranker import SortingMetric, _make_mask
-from .decoder import _unbind_logits
 
 
 class ClassifierHead(nn.Module, HParamsPuller):
@@ -127,3 +126,10 @@ class ClassifierListwise(nn.Module, LightningCkptLoadable, HParamsPuller):
         unbinded_logits, _, _, scores = self.score(batch=batch, return_logits=True)
         permutations = decoder(unbinded_logits)
         return [([dia[i] for i in perm], score) for perm, dia, score in zip(permutations, batch, scores)]
+
+def _unbind_logits(logits, dia_lens):
+    """get list of tensors with logits corresponding to tokens(utterances) that are not padding ones only"""
+    res = []
+    for lgits, length in zip(logits, dia_lens):
+        res.append(lgits[:length, :length])
+    return res

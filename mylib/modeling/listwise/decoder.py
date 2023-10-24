@@ -2,7 +2,7 @@ from torch import nn
 import torch
 import torch.nn.functional as F
 from .ranker import SortingMetric
-from .classifier import ClfListwise, ClfHead, ClfSortingLoss, _make_mask
+from .classifier import ClassifierListwise, ClassifierHead, ClassifierSortingLoss, _make_mask, _unbind_logits
 import numpy as np
 from scipy.special import log_softmax
 
@@ -48,14 +48,6 @@ class DecoderSortingMetric:
         unbinded_logits = _unbind_logits(probs_logits, dia_lens)
         permutations = self.decoder(unbinded_logits)
         return 1-np.mean([SortingMetric._normalized_inversions_count(perm) for perm in permutations])
-
-
-def _unbind_logits(logits, dia_lens):
-    """get list of tensors with logits corresponding to tokens(utterances) that are not padding ones only"""
-    res = []
-    for lgits, length in zip(logits, dia_lens):
-        res.append(lgits[:length, :length])
-    return res
 
 
 class Decoder:
@@ -151,7 +143,7 @@ class Decoder:
         return logits
 
 
-class DecoderListwise(ClfListwise):
+class DecoderListwise(ClassifierListwise):
     def __init__(self, dialogue_model, dropout_prob, max_n_uts, decoder, temperature=0.1):
         super().__init__(dialogue_model, dropout_prob, max_n_uts)
 
@@ -160,8 +152,8 @@ class DecoderListwise(ClfListwise):
         self.max_n_uts = max_n_uts
         self.temperature = temperature
         
-        self.clf_head = ClfHead(dialogue_model.get_hidden_size(), max_n_uts, dropout_prob)
-        self.sorting_loss_clf = ClfSortingLoss()
+        self.clf_head = ClassifierHead(dialogue_model.get_hidden_size(), max_n_uts, dropout_prob)
+        self.sorting_loss_clf = ClassifierSortingLoss()
         self.sorting_loss_dec = DecoderSortingLoss()
         self.metric_fn = DecoderSortingMetric(decoder)
 

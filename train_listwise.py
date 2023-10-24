@@ -31,11 +31,13 @@ if __name__ == "__main__":
 
     if args.model == 'listwise-utterance-transformer':
         learner_config = ListwiseLearnerConfig(
-            batch_size=192,
+            batch_size=128,
             warmup_period=200,
             do_periodic_warmup=False,
             lr=3e-5,
             finetune_layers=3,
+            train_fraction=1.,
+            val_fraction=0.2
         )
 
         config = UtteranceTransformerDMConfig(
@@ -60,6 +62,8 @@ if __name__ == "__main__":
             do_periodic_warmup=False,
             lr=3e-5,
             finetune_layers=3,
+            train_fraction=1.,
+            val_fraction=0.2
         )
 
         dialogue_model = SparseTransformerDM(amazon_name)
@@ -76,6 +80,8 @@ if __name__ == "__main__":
             do_periodic_warmup=False,
             lr=3e-5,
             finetune_layers=3,
+            train_fraction=1.,
+            val_fraction=0.2
         )
 
         config = HSSAConfig()
@@ -110,9 +116,15 @@ if __name__ == "__main__":
     
     from mylib.utils.training.listwise import DialogueDataset
     from torch.utils.data import DataLoader
+    import os
+
+    path = os.path.join(os.getcwd(), 'mylib/data/train/source')
 
     train_loader = DataLoader(
-        dataset=DialogueDataset('.', 'train', fraction=1.),
+        dataset=DialogueDataset(
+            path=os.path.join(path, 'train'),
+            fraction=learner_config.train_fraction
+        ),
         batch_size=learner_config.batch_size,
         shuffle=False,
         num_workers=3,
@@ -120,7 +132,10 @@ if __name__ == "__main__":
     )
 
     val_loader = DataLoader(
-        dataset=DialogueDataset('.', 'val', fraction=.2),
+        dataset=DialogueDataset(
+            path=os.path.join(path, 'val'),
+            fraction=learner_config.val_fraction
+        ),
         batch_size=learner_config.batch_size,
         shuffle=False,
         num_workers=3,
