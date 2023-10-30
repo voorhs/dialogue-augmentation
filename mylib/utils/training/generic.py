@@ -119,7 +119,7 @@ def train(learner, train_loader, val_loader, args):
     import lightning.pytorch as pl
     if args.logger == 'tb':
         Logger = pl.loggers.TensorBoardLogger
-        suffix = 'tensorboad'
+        suffix = 'tensorboard'
     elif args.logger == 'wb':
         Logger = pl.loggers.WandbLogger
         suffix = 'wandb'
