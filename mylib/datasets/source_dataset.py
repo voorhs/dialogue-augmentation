@@ -13,7 +13,7 @@ class DialogueDataset(Dataset):
     def __init__(self, path, fraction=1.):
         self.path = path
         
-        chunk_names = [filename for filename in os.listdir(path) if filename.endswith('.json') and not filename.startswith('ru')]
+        chunk_names = [filename for filename in os.listdir(path) if filename.endswith('.json')]
         self.chunk_names = sorted(chunk_names, key=lambda x: int(x.split('.')[0]))
         
         size = math.ceil(len(self.chunk_names) * fraction)

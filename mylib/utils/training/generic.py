@@ -134,7 +134,7 @@ def train(learner, train_loader, val_loader, args):
 
     trainer = pl.Trainer(
         # max_epochs=1,
-        max_time={'hours': 24},
+        max_time={'hours': 14},
         
         # max_time={'minutes': 10},
         # max_steps=0,
@@ -157,8 +157,8 @@ def train(learner, train_loader, val_loader, args):
         overfit_batches=False,
 
         # check training_step and validation_step doesn't fail
-        fast_dev_run=3,
-        num_sanity_val_steps=3
+        fast_dev_run=False,
+        num_sanity_val_steps=False
     )
 
     if args.resume_from is None:
@@ -183,8 +183,8 @@ def get_argparser():
     ap.add_argument('--name', dest='name', default=None)
     ap.add_argument('--cuda', dest='cuda', default='0')
     ap.add_argument('--seed', dest='seed', default=0, type=int)
-    ap.add_argument('--interval', dest='interval', required=True, type=int)
-    ap.add_argument('--logger', dest='logger', choices=['none', 'tb', 'wb'], default='none')
+    ap.add_argument('--interval', dest='interval', default=500, type=int)
+    ap.add_argument('--logger', dest='logger', choices=['none', 'tb', 'wb'], default='tb')
     ap.add_argument('--resume-training-from', dest='resume_from', default=None)
     ap.add_argument('--load-weights-from', dest='weights_from', default=None)
     return ap

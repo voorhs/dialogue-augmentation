@@ -48,13 +48,13 @@ def filter_dataset_by_length(
         
         filtered_chunk = []
         for i, dia in enumerate(chunk):
-            res = dia
-            if not (dia is None or not is_short_enough(dia, tokenizer)):
-                filtered_chunk.append(res)
+            if not (dia['content'] is None or not is_short_enough(dia, tokenizer)):
+                filtered_chunk.append(dia)
             else: 
                 print(f'rejected dia #{i}')
                 if mode == 'null':
-                    filtered_chunk.append(None)
+                    dia['content'] = None
+                    filtered_chunk.append(dia)
                 elif mode == 'drop':
                     pass
                 else:

@@ -1,5 +1,5 @@
 """
-download `multi_woz_v22` dataset and save it chunks
+download `multi_woz_v22` dataset and save it as chunks
 """
 
 from mylib.utils.data import Dialogue
@@ -48,7 +48,8 @@ if __name__ == "__main__":
                 speakers=sample['turns']['speaker'],
                 source_dataset_name=dataset_name,
                 idx_within_source=i,
-                idx=None
+                idx=None,
+                services=sample['services']
             ) for i, sample in tqdm(enumerate(dataset[split]), desc=f'parsing {dataset_name}')
         ]
 
@@ -60,4 +61,3 @@ if __name__ == "__main__":
         print(f'saving {split}')
         path_out = os.path.join(args.path_out, split)
         save_as_chunks(dialogues[split], path_out, args.chunk_size)
-    

@@ -94,7 +94,6 @@ def parse_dataset(dataset, name, tokenizer, bound):
     
     If dia satisfies conditions, it is converted to `Dialogue` data type."""
     res = []
-    idx = 0
 
     fn = partial(parse_sample, tokenizer=tokenizer, bound=bound)
     parse_results = process_map(fn, dataset, max_workers=2, chunksize=300, desc=f'preprocessing {name}')
@@ -107,9 +106,8 @@ def parse_dataset(dataset, name, tokenizer, bound):
             speakers=speakers,
             source_dataset_name=name,
             idx_within_source=i,
-            idx=idx
+            idx=None
         )
-        idx += 1
         res.append(dia)
 
     # for i, raw_dia in tqdm(enumerate(dataset), desc=f'preprocessing {name}'):
@@ -129,7 +127,7 @@ def parse_dataset(dataset, name, tokenizer, bound):
     return res
 
 
-def train_test_split(data, frac=0.9, seed=0):
+def train_test_split(data: List[Dialogue], frac=0.9, seed=0):
     """resulting sizes:
     - train: `frac`
     - test: `(1 - frac) // 2`
@@ -137,6 +135,10 @@ def train_test_split(data, frac=0.9, seed=0):
     
     set_seet(seed)
     shuffle(data)
+
+    # assign indices after shuffling the dataset
+    for i, dia in enumerate(data):
+        dia.idx = i
 
     n_total = len(data)
     train_size = ceil(frac * n_total)
@@ -215,7 +217,7 @@ if __name__ == "__main__":
     # save splits to file system as json chunks ('mylib/data/train/source')
     import os
     root_dir = os.environ['ROOT_DIR']
-    save_path = os.path.join(root_dir, 'mylib', 'data', 'source')
+    save_path = os.path.join(root_dir, 'data', 'source')
 
     for split, data in dialogues.items():
         print(f'saving chunks for {split} dialogues')
@@ -225,14 +227,14 @@ if __name__ == "__main__":
     # === context-response pairs dataset ===
 
     # make pairs
-    save_path = os.path.join(root_dir, 'mylib', 'data', 'train', 'context-response-pairs')
+    save_path = os.path.join(root_dir, 'data', 'train', 'context-response-pairs')
     nsp_dataset = defaultdict(list)
     for split in ['train', 'test', 'val']:
         nsp_dataset[split] = make_pairs(dialogues[split])
         print(split, len(nsp_dataset[split]))
 
     # save as chunks
-    save_path = os.path.join(root_dir, 'mylib', 'data', 'train', 'context-response-pairs')
+    save_path = os.path.join(root_dir, 'data', 'train', 'context-response-pairs')
     for split, data in nsp_dataset.items():
         print(f'saving chunks for {split} context-response pairs')
         path = os.path.join(save_path, split)

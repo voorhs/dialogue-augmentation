@@ -20,7 +20,7 @@ if __name__ == "__main__":
         finetune_layers=1
     )
     
-    model = BaselineDialogueEncoder('bert-base')
+    model = BaselineDialogueEncoder('bert-base-cased')
     freeze_hf_model(model.model, learner_config.finetune_layers)
 
     # ======= DEFINE LEARNER =======
@@ -41,9 +41,9 @@ if __name__ == "__main__":
     import os
     root_dir = os.environ['ROOT_DIR']
     contrastive_path = os.path.join(root_dir, 'data', 'train', 'dialogue-encoder', 'contrastive')
-    multiwoz_path = os.path.join(root_dir, 'data', 'train', 'dialogue-encoder', 'multiwoz')
+    multiwoz_path = os.path.join(root_dir, 'data', 'train', 'dialogue-encoder', 'multiwoz22')
 
-    from mylib.utils.data import ContrastiveDataset, MultiWOZServiceClfDataset
+    from mylib.datasets import ContrastiveDataset, MultiWOZServiceClfDataset
     contrastive_train = ContrastiveDataset(os.path.join(contrastive_path, 'train'))
     # contrastive_val = ContrastiveDataset(os.path.join(contrastive_path, 'val'))
     

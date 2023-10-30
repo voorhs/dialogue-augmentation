@@ -1,6 +1,6 @@
 # Dialogue Augmentation
 
-Структура репы:
+Скрипты:
 - скрипты для DGAC кластеризации:
     - `parse_multiwoz.py`
     - `sentence_encoding.py`
@@ -13,6 +13,20 @@
     - `similarity_funtions.py`
     - `visualization_utis.py`
     - `similarity_analysis.ipynb`
+
+## Как сделать датасет
+
+Контрастивный датасет для трейна диалогового энкодера:
+- `make_source_dataset.py` => `data/source/train/`, датасет из диалогов
+- `filter_dataset_by_length.py` => `data/misc/original-truncated/`, датасет с нанами на месте слишком длинных диалогов (`mode='null'`)
+- `make_augmentations.py` => `augmented/`, всевозможные аугментации трейна
+- `make_contrastive_dialogue_train_data.py` => `data/train/dialogue-encoder/contrastive/`
+
+Мультивоз датасет для service clf:
+- `make_multiwoz_dataset.py` => `data/misc/multiwoz22/`
+- `filter_dataset_by_length.py` => `data/train/dialogue-encoder/multiwoz22`, датасет с без слишком длинных диалогов (`mode='drop'`)
+
+
 
 ## Текущие мысли
 

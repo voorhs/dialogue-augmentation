@@ -47,20 +47,20 @@ class DialogueEcoderLearner(BaseLearner):
 
     def _contrastive_step(self, batch):
         """`batch` is a list of samples from ContrastiveDataset"""
-        origs = [sample['orig'] for sample in batch]
+        origs = [sample['orig']['content'] for sample in batch]
         
         # select positives
         points = np.random.uniform(low=0, high=1, size=len(batch))
         counts = np.array([len(sample['pos']) for sample in batch])
         pos_indices = np.floor(points * counts).astype(np.int_)
         
-        positives = [sample['pos'][i] for i, sample in zip(pos_indices, batch)]
+        positives = [sample['pos'][i]['content'] for i, sample in zip(pos_indices, batch)]
 
         # select hard_negatives
         hard_negatives = []
         hard_negatives_counts = []
         for sample in batch:
-            negs = sample['neg']
+            negs = [dia['content'] for dia in sample['neg']]
             hard_negatives.extend(negs)
             hard_negatives_counts.append(len(negs))
 
