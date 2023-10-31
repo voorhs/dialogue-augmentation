@@ -105,8 +105,8 @@ if __name__ == "__main__":
 
     import argparse
     ap = argparse.ArgumentParser()
-    ap.add_argument('--path-out', dest='path_out', default='data/train/dialogue-encoder/contrastive/train')
-    ap.add_argument('--orig-name', dest='orig_path', default='truncated-bert-base-cased')
+    ap.add_argument('--path-out', dest='path_out', default='data/train/dialogue-encoder-bert-base-cased/contrastive/train')
+    ap.add_argument('--orig-name', dest='orig_name', default='original')
     ap.add_argument('--aug-path', dest='aug_path', default=default_aug_path)
     ap.add_argument('--positive-names', dest='positive_names', nargs='+', default=['back-translate', 'back-translate-prune', 'back-translate-shuffle', 'prune-insert', 'insert', 'shuffle', 'prune', 'shuffle-insert'])
     ap.add_argument('--negative-names', dest='negative_names', nargs='*', default=['replace', 'replace-prune'])

@@ -1,4 +1,5 @@
 from .insert import Inserter
+import numpy as np
 
 
 class Replacer(Inserter):
@@ -29,7 +30,7 @@ class Replacer(Inserter):
                 words[i] = '<mask>'
         return words
     
-    def _replace_masks(self, text, outputs):
+    def _replace_masks(self, text: str, outputs):
         for words, scores in outputs:
             i = text.find('<mask>')
             to_insert = self.replaced_tokens.pop(0)

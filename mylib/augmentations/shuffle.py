@@ -2,7 +2,7 @@ import numpy as np
 import torch
 from tqdm import tqdm
 import random
-from .prune import _load_pairwise_cat, _cluster
+from .prune import _load_pairwise_cat, _cluster, Pairwise
 
 
 class Shuffler:
@@ -24,7 +24,7 @@ class Shuffler:
 
     @staticmethod
     @torch.no_grad()
-    def _shuffle(model, dia):
+    def _shuffle(model: Pairwise, dia):
         if len(dia) < 12:
             return None, -np.inf
         end = len(dia) // 3

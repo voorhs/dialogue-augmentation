@@ -16,7 +16,8 @@ class BaseLearnerConfig:
 
 #! fix `get_parameter_group()`
 class BaseLearner(pl.LightningModule):
-    def get_default_learner_config(self):
+    @staticmethod
+    def get_default_config():
         raise NotImplementedError()
     
     def on_train_start(self):
@@ -66,7 +67,7 @@ class LightningCkptLoadable:
             path_to_ckpt,
             map_location=map_location,
             model=self,
-            config=learner_class.get_default_learner_config(),
+            config=learner_class.get_default_config(),
         ).model
         
         self.load_state_dict(model.state_dict())

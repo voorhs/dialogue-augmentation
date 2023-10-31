@@ -1,4 +1,5 @@
-from ..modeling.pairwise import ChainCosine, TargetEncoder, ContextEncoderConcat
+from ..modeling.pairwise import Pairwise, TargetEncoder, ContextEncoderConcat
+from ..utils.training.pairwise import PairwiseLearner
 from ..modeling.aux import mySentenceTransformer
 from sklearn.cluster import AgglomerativeClustering
 import numpy as np
@@ -13,24 +14,24 @@ def _load_pairwise_cat(ckpt_path, device):
     _encoder = mySentenceTransformer(encoder_name)
     _target_encoder = TargetEncoder(_encoder)
     _context_encoder = ContextEncoderConcat(_encoder, context_size=context_size)
-    _model = ChainCosine(
+    model = Pairwise(
         target_encoder=_target_encoder,
         context_encoder=_context_encoder,
         projection_size=256,
-        context_size=context_size,
     )
 
-    return ChainCosine.from_checkpoint(
+    model.load_checkpoint(
         path_to_ckpt=ckpt_path,
-        model=_model,
-        map_location=device
-    ).eval()
+        map_location=device,
+        learner_class=PairwiseLearner
+    )
+    return model.eval()
 
 
 class Pruner:
     def __init__(
             self,
-            ckpt_path='/home/alekseev_ilya/dialogue-augmentation/nup/logs/training/pairwise-cat-speaker-issue/checkpoints/last.ckpt',
+            ckpt_path='./logs/tensorboard/pairwise-listwise/pairwise-cat-speaker-issue/checkpoints/last.ckpt',
             device='cpu',
             thresh=-np.inf
         ):
@@ -45,7 +46,7 @@ class Pruner:
         return res
 
     @staticmethod
-    def _cut(model, dia):
+    def _cut(model: Pairwise, dia):
         """drops all clusters except the biggest one. applies transformation only to dialogues with 6 utterances at least"""
         if len(dia) < 6:
             return None, -np.inf
@@ -63,7 +64,7 @@ class Pruner:
 
 
 @torch.no_grad()
-def _cluster(model, dia, n_clusters):
+def _cluster(model: Pairwise, dia, n_clusters):
     """clusters utterances within dia according to logits (similarities) from pairwise model"""
     batch = model.make_batch_from_dia(dia)
     similarities = model.get_logits(batch, temperature=1).cpu().numpy()

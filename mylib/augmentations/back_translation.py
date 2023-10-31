@@ -1,5 +1,7 @@
 from transformers import pipeline
 from tqdm import tqdm
+from .insert import to_dia, to_uts
+
 
 class BackTranslator:
     """Back Translate each utterance (separately). Preserves intent."""
@@ -62,7 +64,7 @@ class BackTranslator:
         ru = to_dia(forth, dialogues)
         #!
         res = to_dia(back, dialogues)
-        return res, ru
+        return res
 
     def _augment(self, uts):
         return self._back(self._forth(uts))

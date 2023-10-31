@@ -2,6 +2,7 @@ if __name__ == "__main__":
     
     from mylib.utils.training import get_argparser, init_environment
     ap = get_argparser()
+    ap.add_argument('--data-path', dest='data_path', required=True)
     args = ap.parse_args()
 
     init_environment(args)
@@ -11,7 +12,7 @@ if __name__ == "__main__":
     from mylib.utils.training import freeze_hf_model
     
     learner_config = DialogueEcoderLearnerConfig(
-        k=5,
+        k=1,
         temperature=0.1,
         batch_size=32,
         # warmup_period=200,
@@ -39,9 +40,9 @@ if __name__ == "__main__":
     # ======= DEFINE DATA =======
 
     import os
-    root_dir = os.environ['ROOT_DIR']
-    contrastive_path = os.path.join(root_dir, 'data', 'train', 'dialogue-encoder', 'contrastive')
-    multiwoz_path = os.path.join(root_dir, 'data', 'train', 'dialogue-encoder', 'multiwoz22')
+    # root_dir = os.environ['ROOT_DIR']
+    contrastive_path = os.path.join(args.data_path, 'contrastive')
+    multiwoz_path = os.path.join(args.data_path, 'multiwoz22')
 
     from mylib.datasets import ContrastiveDataset, MultiWOZServiceClfDataset
     contrastive_train = ContrastiveDataset(os.path.join(contrastive_path, 'train'))

@@ -59,6 +59,9 @@ if __name__ == "__main__":
     # listwise_shuffler.from_file_system('listwise_shuffler')
 
     import os
+    root_dir = os.environ['ROOT_DIR']
+    default_path_in = os.path.join(root_dir, 'data', 'source', 'train')
+
     import argparse
     ap = argparse.ArgumentParser()
     ap.add_argument('--method', dest='method', required=True, choices=[
@@ -68,19 +71,21 @@ if __name__ == "__main__":
     ap.add_argument('--seed', dest='seed', default=0)
     ap.add_argument('--name', dest='name', required=True)
     ap.add_argument('--cuda', dest='cuda', required=True)
-    ap.add_argument('--path-in', dest='path_in', default=os.path.join(os.getcwd(), 'src/mylib/data/train/source/train'))
+    ap.add_argument('--path-in', dest='path_in', default=default_path_in)
+    ap.add_argument('--skip-existing', dest='skip_existing', default=True)
     args = ap.parse_args()
 
     from mylib.utils.training import init_environment
     init_environment(args)
 
-    json_chunks = sorted([filename for filename in os.listdir(args.path_in) if filename.endswith('.json')])
-    args.path_out = os.path.join(os.getcwd(), 'src/mylib/data/augmented', args.name)
+    path_out = os.path.join(root_dir, 'data', 'augmented', args.name)
+    json_chunks_in = sorted([filename for filename in os.listdir(args.path_in) if filename.endswith('.json')])
+    json_chunks_out = sorted([filename for filename in os.listdir(path_out) if filename.endswith('.json')])
 
-    print('result is going to be saved to', args.path_out)
+    print('result is going to be saved to', path_out)
 
-    if not os.path.exists(args.path_out):
-        os.makedirs(args.path_out)
+    if not os.path.exists(path_out):
+        os.makedirs(path_out)
     
     from mylib.augmentations import *
 
@@ -109,19 +114,22 @@ if __name__ == "__main__":
         augmenter = Pruner(device='cuda')
     elif args.method == 'shuffle':
         augmenter = Shuffler(device='cuda')
-        exit()
+        # exit()
     
     import json
     from tqdm import tqdm
     
-    for chunk in tqdm(json_chunks[80:]):
+    for chunk in tqdm(json_chunks_in):
+        print(f'{chunk}:', end=' ')
+        if chunk in json_chunks_out and args.skip_existing:
+            print('skipping')
+            continue
+        else:
+            print('making')
         dialogues = json.load(open(os.path.join(args.path_in, chunk), 'r'))
-        clean_dialogues = [dia for dia in dialogues if dia is not None]
+        clean_dialogues = [dia['content'] for dia in dialogues if dia['content'] is not None]
         augmented = augmenter(clean_dialogues)
-        if args.method == 'back-translate':
-            augmented, ru = augmented
-            json.dump(ru, open(os.path.join(args.path_out, 'ru-' + chunk), 'w'))
         for i, dia in enumerate(dialogues):
-            if dia is None:
+            if dia['content'] is None:
                 augmented.insert(i, None)
-        json.dump(augmented, open(os.path.join(args.path_out, chunk), 'w'))
+        json.dump(augmented, open(os.path.join(path_out, chunk), 'w'))
