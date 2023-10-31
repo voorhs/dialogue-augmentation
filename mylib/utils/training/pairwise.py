@@ -85,5 +85,6 @@ class PairwiseLearner(BaseLearner):
         )
         return {"optimizer": optimizer, "lr_scheduler": {"scheduler": scheduler, "interval": "step", 'frequency': 1}}
 
+    @staticmethod
     def get_default_config():
         return PairwiseLearnerConfig()
