@@ -8,7 +8,7 @@ if __name__ == "__main__":
     init_environment(args)
 
     from mylib.modeling.dialogue import BaselineDialogueEncoder
-    from mylib.utils.training.dialogue_encoder import DialogueEcoderLearner, DialogueEcoderLearnerConfig
+    from mylib.learners import DialogueEcoderLearner, DialogueEcoderLearnerConfig
     from mylib.utils.training import freeze_hf_model
     
     learner_config = DialogueEcoderLearnerConfig(
@@ -63,7 +63,7 @@ if __name__ == "__main__":
     contrastive_train_loader = DataLoader(
         dataset=contrastive_train,
         batch_size=learner_config.batch_size,
-        shuffle=False,
+        shuffle=True,
         num_workers=3,
         collate_fn=collate_fn,
         drop_last=True
@@ -81,7 +81,7 @@ if __name__ == "__main__":
         shuffle=False,
         num_workers=3,
         collate_fn=collate_fn,
-        drop_last=True
+        drop_last=False
     )
     multiwoz_val_loader = DataLoader(
         dataset=multiwoz_val,
@@ -95,4 +95,4 @@ if __name__ == "__main__":
 
     from mylib.utils.training import train
 
-    train(learner, contrastive_train_loader, [multiwoz_train_loader, multiwoz_val_loader], args)
+    train(learner, contrastive_train_loader, [multiwoz_train_loader, multiwoz_val_loader], args, metric_to_monitor='ranking_metric')

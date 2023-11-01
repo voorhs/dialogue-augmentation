@@ -29,7 +29,7 @@ if __name__ == "__main__":
         Pairwise,
         SymmetricPairwise
     )
-    from mylib.utils.training.pairwise import PairwiseLearner, PairwiseLearnerConfig
+    from mylib.learners import PairwiseLearner, PairwiseLearnerConfig
     from mylib.modeling.dialogue import SparseTransformerDM
 
     if args.model == 'pairwise-cat':
@@ -145,7 +145,7 @@ if __name__ == "__main__":
     root_dir = os.environ['ROOT_DIR']
     path = os.path.join(root_dir, 'data', 'train', 'context-response-pairs')
 
-    from mylib.utils.data import ContextResponseDataset
+    from mylib.datasets import ContextResponseDataset
     from torch.utils.data import DataLoader
 
     train_loader = DataLoader(

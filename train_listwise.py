@@ -27,7 +27,7 @@ if __name__ == "__main__":
         HSSAConfig
     )
     from mylib.modeling.listwise import RankerListwise  #, ClassifierListwise, DecoderListwise
-    from mylib.utils.training.listwise import ListwiseLearner, ListwiseLearnerConfig
+    from mylib.learners import ListwiseLearner, ListwiseLearnerConfig
 
     if args.model == 'listwise-utterance-transformer':
         learner_config = ListwiseLearnerConfig(
@@ -118,7 +118,7 @@ if __name__ == "__main__":
     root_dir = os.environ['ROOT_DIR']
     path = os.path.join(root_dir, 'data', 'source')
 
-    from mylib.utils.data import DialogueDataset
+    from mylib.datasets import DialogueDataset
     from torch.utils.data import DataLoader
 
     train_loader = DataLoader(

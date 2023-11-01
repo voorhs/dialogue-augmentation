@@ -9,8 +9,11 @@ import torch.nn.functional as F
 from torchmetrics.functional.classification import multilabel_f1_score
 from torch.utils.data import DataLoader
 from sklearn.neural_network import MLPClassifier
-from sklearn.metrics import f1_score
+from sklearn.metrics import f1_score, average_precision_score
+from scipy.stats import pearsonr
 from .generic import BaseLearnerConfig, BaseLearner
+from sklearn.preprocessing import normalize as sklearn_normalize
+import json
 
 
 @dataclass
@@ -36,6 +39,8 @@ class DialogueEcoderLearner(BaseLearner):
 
         if self.config.loss == 'multiwoz_service_clf':
             self.clf_head = nn.Linear(self.model.get_hidden_size(), 7)
+        
+        self.path_to_gold_multiwoz_intent_similarities = 'data/train/dialogue-encoder-bert-base-cased/multiwoz_intent_similarities.npy'
 
     def forward(self, batch):
         if self.config.loss == 'contrastive':
@@ -143,19 +148,32 @@ class DialogueEcoderLearner(BaseLearner):
             self.multiwoz_validation.extend(res)
     
     def on_validation_epoch_end(self) -> None:
-        metric = get_multiwoz_service_clf_score_sklearn(
+        corr_metric = get_multiwoz_intent_correlation_score(
+            self.multiwoz_train,
+            self.multiwoz_validation,
+            np.load(self.path_to_gold_multiwoz_intent_similarities)
+        )
+
+        clf_metric = get_multiwoz_service_clf_score(
             self.multiwoz_train,
             self.multiwoz_validation
         )
 
-        self.log(
-            name='val_metric',
-            value=metric,
+        ranking_metric = get_multiwoz_service_ranking_score(
+            self.multiwoz_train,
+            self.multiwoz_validation
+        )
+
+        self.log_dict(
+            dictionary={
+                'clf_metric': clf_metric,
+                'ranking_metric': ranking_metric,
+                'corr_metric': corr_metric
+            },
             prog_bar=False,
             logger=True,
             on_step=False,
-            on_epoch=True,
-            # batch_size=self.config.batch_size
+            on_epoch=True
         )
 
         self.multiwoz_train.clear()
@@ -182,7 +200,7 @@ class DialogueEcoderLearner(BaseLearner):
         return {"optimizer": optimizer, "lr_scheduler": {"scheduler": scheduler, "interval": "step", 'frequency': 1}}
 
 
-def get_multiwoz_service_clf_score_sklearn(train_dataset, val_dataset, n_epochs=2):
+def get_multiwoz_service_clf_score(train_dataset, val_dataset, n_epochs=2):
     # configure model
     clf = MLPClassifier(
         batch_size=32,
@@ -206,100 +224,38 @@ def get_multiwoz_service_clf_score_sklearn(train_dataset, val_dataset, n_epochs=
     return score
 
 
-def get_multiwoz_service_clf_score_torch(train_dataset, val_dataset, device, n_epochs=2):
-    # === configure model ===
-    emb, tar = train_dataset[0]
-    input_size = len(emb)
-    n_classes = len(tar)
+def get_multiwoz_service_ranking_score(train_dataset, val_dataset):
+    # configure data
+    X_train = np.stack([emb for emb, _ in train_dataset], axis=0)
+    Y_train_raw = np.stack([tar for _, tar in train_dataset], axis=0)
+    X_val = np.stack([emb for emb, _ in val_dataset], axis=0)
+    Y_val_raw = np.stack([tar for _, tar in val_dataset], axis=0)
     
-    learner = LinearProbeClf(input_size, n_classes).to(device)
-    optimizer = learner.configure_optimizers()
+    X_train = sklearn_normalize(X_train, axis=1)
+    X_val = sklearn_normalize(X_val, axis=1)
 
-    # === configure data ===
-    def collate_fn(batch):
-        embeddings = np.stack([emb for emb, _ in batch], axis=0)
-        targets = np.stack([tar for _, tar in batch], axis=0)
+    avg_scores = []
+    for x_val, y_val_raw in zip(X_val, Y_val_raw):
+        # indicates that train sample and val sample has at least one common service
+        labels = np.sum(Y_train_raw * y_val_raw[None, :], axis=1) > 0
 
-        embeddings = torch.from_numpy(embeddings)
-        targets = torch.from_numpy(targets)
+        # cosine similarities
+        scores = X_train @ x_val
 
-        embeddings.requires_grad_(False)
-        targets.requires_grad_(False)
-        
-        return embeddings, targets
-        
-    train_loader = DataLoader(
-        dataset=train_dataset,
-        batch_size=32,
-        shuffle=False,
-        num_workers=3,
-        collate_fn=collate_fn
-    )
-    val_loader = DataLoader(
-        dataset=val_dataset,
-        batch_size=32,
-        shuffle=False,
-        num_workers=3,
-        collate_fn=collate_fn
-    )
-
-    # === train ===
-    for i_epoch in range(n_epochs):
-        for i_batch, batch in enumerate(train_loader):
-            embeddings = batch[0].to(device)
-            targets = batch[1].to(device)
-
-            optimizer.zero_grad()
-            loss = learner(embeddings, targets)
-
-            loss.backward()
-            optimizer.step()
-
-    # === validate ===
-    for i_batch, batch in enumerate(val_loader):
-        embeddings = batch[0].to(device)
-        targets = batch[1].to(device)
-
-        learner.validation_step((embeddings, targets), i_batch)
+        avg_scores.append(average_precision_score(labels, scores))
     
-    score = learner.on_validation_epoch_end()
-    return score
+    map_score = sum(avg_scores) / len(avg_scores)
+    return map_score
 
 
-class LinearProbeClf(nn.Module):
-    def __init__(self, input_size, n_classes):
-        super().__init__()
+def get_multiwoz_intent_correlation_score(train_dataset, val_dataset, gold_intent_similarities):
+    X_train = np.stack([emb for emb, _ in train_dataset], axis=0)
+    X_val = np.stack([emb for emb, _ in val_dataset], axis=0)
 
-        self.clf = nn.Linear(input_size, n_classes)
+    X_train = sklearn_normalize(X_train, axis=1)
+    X_val = sklearn_normalize(X_val, axis=1)
 
-        self.validation_steps_logits = []
-        self.validation_steps_targets = []
+    pred_intent_similatities = X_train @ X_val.T
+    corr_score = pearsonr(pred_intent_similatities.flatten(), gold_intent_similarities.flatten()).statistic
     
-    def forward(self, embeddings, targets):
-        logits = self.clf(embeddings)
-        print(logits.requires_grad, targets.requires_grad)
-        loss = F.binary_cross_entropy_with_logits(logits, targets, reduction='mean')
-        return loss
-    
-    # def training_step(self, batch, batch_idx):
-    #     embeddings, targets = batch
-    #     return self.forward(embeddings, targets)
-    
-    def validation_step(self, batch, batch_idx):
-        embeddings, targets = batch
-        logits = self.clf(embeddings)  # (B, 7)
-        
-        self.validation_steps_logits.append(logits)
-        self.validation_steps_targets.append(targets)
-
-    def on_validation_epoch_end(self):
-        logits = torch.concat(self.validation_steps_logits, dim=0)
-        targets = torch.concat(self.validation_steps_targets, dim=0)
-        num_labels = targets.shape[1]
-        metric = multilabel_f1_score(logits, targets, num_labels=num_labels, average='macro')
-        # self.log(name='result', value=metric)
-        return metric.cpu().item()
-    
-    def configure_optimizers(self):
-        return AdamW(self.parameters(), lr=5e-4)
-
+    return corr_score

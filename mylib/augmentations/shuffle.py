@@ -8,14 +8,14 @@ from .prune import _load_pairwise_cat, _cluster, Pairwise
 class Shuffler:
     def __init__(
             self,
-            ckpt_path='/home/alekseev_ilya/dialogue-augmentation/nup/logs/training/pairwise-cat-speaker-issue/checkpoints/last.ckpt',
+            ckpt_path='./logs/tensorboard/pairwise-listwise/pairwise-cat-speaker-issue/checkpoints/last.ckpt',
             device='cpu',
             thresh=-np.inf
         ):
         self.thresh = thresh
         self.model = _load_pairwise_cat(ckpt_path, device)
     
-    def from_argument(self, dialogues):
+    def __call__(self, dialogues):
         res = []
         for dia in tqdm(dialogues, desc='shuffling dialogues'):
             aug, score = self._shuffle(self.model, dia)
