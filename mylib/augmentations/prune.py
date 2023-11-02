@@ -1,5 +1,5 @@
 from ..modeling.pairwise import Pairwise, TargetEncoder, ContextEncoderConcat
-from ..utils.training.pairwise import PairwiseLearner
+from ..learners import PairwiseLearner
 from ..modeling.aux import mySentenceTransformer
 from sklearn.cluster import AgglomerativeClustering
 import numpy as np

@@ -40,7 +40,7 @@ class DialogueEcoderLearner(BaseLearner):
         if self.config.loss == 'multiwoz_service_clf':
             self.clf_head = nn.Linear(self.model.get_hidden_size(), 7)
         
-        self.path_to_gold_multiwoz_intent_similarities = 'data/train/dialogue-encoder-bert-base-cased/multiwoz_intent_similarities.npy'
+        self.path_to_gold_multiwoz_intent_similarities = 'data/misc/multiwoz/multiwoz_intent_similarities.npy'
 
     def forward(self, batch):
         if self.config.loss == 'contrastive':

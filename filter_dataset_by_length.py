@@ -3,7 +3,7 @@ if __name__ == "__main__":
     ap = argparse.ArgumentParser()
     ap.add_argument('--path-in', dest='path_in', required=True)
     ap.add_argument('--path-out', dest='path_out', required=True)
-    ap.add_argument('--tokenizer', dest='tokenizer', default='bert-base-cased')
+    ap.add_argument('--tokenizer', dest='tokenizer', required=True)
     ap.add_argument('--mode', dest='mode', choices=['null', 'drop'], required=True)
     args = ap.parse_args()
 

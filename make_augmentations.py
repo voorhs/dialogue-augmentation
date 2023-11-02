@@ -132,4 +132,6 @@ if __name__ == "__main__":
         for i, dia in enumerate(dialogues):
             if dia['content'] is None:
                 augmented.insert(i, None)
-        json.dump(augmented, open(os.path.join(path_out, chunk), 'w'))
+        for dia, aug in zip(dialogues, augmented):
+            dia['content'] = aug
+        json.dump(dialogues, open(os.path.join(path_out, chunk), 'w'))

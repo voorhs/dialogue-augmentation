@@ -101,11 +101,11 @@ def make_contrastive_chunk(orig_chunk, pos_chunk, neg_chunk, allow_absent_neg):
 if __name__ == "__main__":
     import os
     root_dir = os.environ['ROOT_DIR']
-    default_aug_path = os.path.join(root_dir, 'data', 'augmented')
+    default_aug_path = os.path.join(root_dir, 'data', 'augmented-roberta-base')
 
     import argparse
     ap = argparse.ArgumentParser()
-    ap.add_argument('--path-out', dest='path_out', default='data/train/dialogue-encoder-bert-base-cased/contrastive/train')
+    ap.add_argument('--path-out', dest='path_out', default='data/train/dialogue-encoder-roberta-base/contrastive/train')
     ap.add_argument('--orig-name', dest='orig_name', default='original')
     ap.add_argument('--aug-path', dest='aug_path', default=default_aug_path)
     ap.add_argument('--positive-names', dest='positive_names', nargs='+', default=['back-translate', 'back-translate-prune', 'back-translate-shuffle', 'prune-insert', 'insert', 'shuffle', 'prune', 'shuffle-insert'])

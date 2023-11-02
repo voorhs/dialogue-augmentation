@@ -3,6 +3,7 @@ if __name__ == "__main__":
     from mylib.utils.training import get_argparser, init_environment
     ap = get_argparser()
     ap.add_argument('--data-path', dest='data_path', required=True)
+    ap.add_argument('--hf-model', dest='hf_model', required=True)
     args = ap.parse_args()
 
     init_environment(args)
@@ -21,7 +22,7 @@ if __name__ == "__main__":
         finetune_layers=1
     )
     
-    model = BaselineDialogueEncoder('bert-base-cased')
+    model = BaselineDialogueEncoder(args.hf_model)
     freeze_hf_model(model.model, learner_config.finetune_layers)
 
     # ======= DEFINE LEARNER =======
