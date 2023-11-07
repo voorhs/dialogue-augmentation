@@ -1,5 +1,5 @@
 import numpy as np
-from dataclasses import dataclass, asdict
+from dataclasses import dataclass
 from torch.optim import AdamW
 from torch.optim.lr_scheduler import LambdaLR
 import torch.nn as nn
@@ -7,17 +7,16 @@ import torch
 from typing import Literal
 import torch.nn.functional as F
 from torchmetrics.functional.classification import multilabel_f1_score
-from torch.utils.data import DataLoader
 from sklearn.neural_network import MLPClassifier
 from sklearn.metrics import f1_score, average_precision_score
 from scipy.stats import pearsonr
 from .generic import BaseLearnerConfig, BaseLearner
 from sklearn.preprocessing import normalize as sklearn_normalize
-import json
 
 
 @dataclass
-class DialogueEcoderLearnerConfig(BaseLearnerConfig):
+class DialogueEncoderLearnerConfig(BaseLearnerConfig):
+    path_to_gold_multiwoz_intent_similarities: str = ''
     k: int = 5
     temperature: float = 0.05
     loss: Literal['contrastive', 'ict', 'multiwoz_service_clf'] = 'contrastive'
@@ -27,8 +26,8 @@ class DialogueEcoderLearnerConfig(BaseLearnerConfig):
     multiwoz_val_frac: float = 1.
 
 
-class DialogueEcoderLearner(BaseLearner):
-    def __init__(self, model, config: DialogueEcoderLearnerConfig):
+class DialogueEncoderLearner(BaseLearner):
+    def __init__(self, model, config: DialogueEncoderLearnerConfig):
         super().__init__()
         self.model = model
         self.config = config
@@ -39,8 +38,6 @@ class DialogueEcoderLearner(BaseLearner):
 
         if self.config.loss == 'multiwoz_service_clf':
             self.clf_head = nn.Linear(self.model.get_hidden_size(), 7)
-        
-        self.path_to_gold_multiwoz_intent_similarities = 'data/misc/multiwoz/multiwoz_intent_similarities.npy'
 
     def forward(self, batch):
         if self.config.loss == 'contrastive':
@@ -151,7 +148,7 @@ class DialogueEcoderLearner(BaseLearner):
         corr_metric = get_multiwoz_intent_correlation_score(
             self.multiwoz_train,
             self.multiwoz_validation,
-            np.load(self.path_to_gold_multiwoz_intent_similarities)
+            np.load(self.config.path_to_gold_multiwoz_intent_similarities)
         )
 
         clf_metric = get_multiwoz_service_clf_score(

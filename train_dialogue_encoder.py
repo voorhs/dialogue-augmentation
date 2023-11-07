@@ -9,17 +9,19 @@ if __name__ == "__main__":
     init_environment(args)
 
     from mylib.modeling.dialogue import BaselineDialogueEncoder
-    from mylib.learners import DialogueEcoderLearner, DialogueEcoderLearnerConfig
+    from mylib.learners import DialogueEncoderLearner, DialogueEncoderLearnerConfig
     from mylib.utils.training import freeze_hf_model
+    import os
     
-    learner_config = DialogueEcoderLearnerConfig(
+    learner_config = DialogueEncoderLearnerConfig(
         k=1,
         temperature=0.1,
         batch_size=32,
         # warmup_period=200,
         do_periodic_warmup=False,
         lr=3e-6,
-        finetune_layers=1
+        finetune_layers=1,
+        path_to_gold_multiwoz_intent_similarities=os.path.join(args.data_path, 'multiwoz22', 'multiwoz_intent_similarities.npy')
     )
     
     model = BaselineDialogueEncoder(args.hf_model)
@@ -28,15 +30,15 @@ if __name__ == "__main__":
     # ======= DEFINE LEARNER =======
 
     if args.weights_from is not None:
-        learner = DialogueEcoderLearner.load_from_checkpoint(
+        learner = DialogueEncoderLearner.load_from_checkpoint(
             checkpoint_path=args.weights_from,
             model=model,
             config=learner_config
         )
     else:
-        learner = DialogueEcoderLearner(model, learner_config)
+        learner = DialogueEncoderLearner(model, learner_config)
 
-    learner = DialogueEcoderLearner(model, learner_config)
+    learner = DialogueEncoderLearner(model, learner_config)
 
     # ======= DEFINE DATA =======
 
@@ -47,7 +49,6 @@ if __name__ == "__main__":
 
     from mylib.datasets import ContrastiveDataset, MultiWOZServiceClfDataset
     contrastive_train = ContrastiveDataset(os.path.join(contrastive_path, 'train'))
-    # contrastive_val = ContrastiveDataset(os.path.join(contrastive_path, 'val'))
     
     multiwoz_train = MultiWOZServiceClfDataset(
         path=os.path.join(multiwoz_path, 'train'),
@@ -69,13 +70,6 @@ if __name__ == "__main__":
         collate_fn=collate_fn,
         drop_last=True
     )
-    # contrastive_val_loader = DataLoader(
-    #     dataset=contrastive_val,
-    #     batch_size=learner_config.batch_size,
-    #     shuffle=False,
-    #     num_workers=3,
-    #     collate_fn=collate_fn
-    # )
     multiwoz_train_loader = DataLoader(
         dataset=multiwoz_train,
         batch_size=learner_config.batch_size,
