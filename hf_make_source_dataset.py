@@ -32,7 +32,7 @@ upper_bounds = {
 
 from tqdm import tqdm
 from tqdm import tqdm
-from mylib.utils.data import Dialogue, ContextResponsePair
+from mylib.utils.data import Dialogue
 import json
 from datasets import load_dataset, DatasetDict, Dataset
 
@@ -97,21 +97,8 @@ def get_record_generator(name, tokenizer, bound):
             idx_within_source=i,
             # idx=None
         )
-        dct = dia.asdict()
-        dct['content'] = json.dumps(dct['content'])
-        yield dct
+        yield dia.asdict()
 
-
-# def make_pairs(dialogues):
-#     res = []
-#     for dia in tqdm(dialogues, desc='making pairs'):
-#         pairs = []
-#         for i in range(len(dia)-1):
-#             pairs.append((dia[:i+1], dia[i+1]))
-#         res.extend(pairs)
-#     shuffle(res)
-#     res = [ContextResponsePair(context=c, response=r, idx=i) for i, (c, r) in enumerate(res)]
-#     return res
 
 def train_test_split(dataset: Dataset):
     train_test = dataset.train_test_split(test_size=.1, shuffle=True, seed=0)
@@ -134,6 +121,8 @@ if __name__ == "__main__":
 
     seed_everything(0)
 
+    output_path = 'data-2/source'
+
     # supress warnings about long sequences
     import logging
     logging.getLogger("transformers.tokenization_utils_base").setLevel(logging.ERROR)
@@ -147,26 +136,9 @@ if __name__ == "__main__":
             generator = get_record_generator(dataset_name, tokenizer, upper_bounds[dataset_name])
             yield from generator
 
-    # main line of code that creats dataset
-    dialog_dataset = Dataset.from_generator(chained_generator, cache_dir='data-2/source-hf')
+    # main line of code that creates dataset
+    dialog_dataset = Dataset.from_generator(chained_generator, cache_dir=output_path)
     
     # make splits and save to disk
     dialog_dataset = train_test_split(dialog_dataset)
-    dialog_dataset.save_to_disk('data-2/source-hf', num_shards={'train': 1024, 'test': 128, 'val': 128})
-
-    # # === context-response pairs dataset ===
-
-    # # make pairs
-    # save_path = os.path.join(root_dir, 'data', 'train', 'context-response-pairs')
-    # nsp_dataset = defaultdict(list)
-    # for split in ['train', 'test', 'val']:
-    #     nsp_dataset[split] = make_pairs(dialogues[split])
-    #     print(split, len(nsp_dataset[split]))
-
-    # # save as chunks
-    # save_path = os.path.join(root_dir, 'data', 'train', 'context-response-pairs')
-    # for split, data in nsp_dataset.items():
-    #     print(f'saving chunks for {split} context-response pairs')
-    #     path = os.path.join(save_path, split)
-    #     del_last = (split == 'test')
-    #     save_as_chunks(data, path, chunk_size=2048, del_last_chunk=del_last)
+    dialog_dataset.save_to_disk(output_path, num_shards={'train': 64, 'test': 8, 'val': 8})

@@ -64,7 +64,6 @@ class ContextResponsePair(BaseDictDType):
             self,
             context: Union[Dialogue, dict],
             response: Union[Dialogue, dict],
-            idx: int = None,
             **fields
         ):
         """add any extra `fields` if extra info is needed to be saved"""
@@ -75,7 +74,6 @@ class ContextResponsePair(BaseDictDType):
                 'response': response.content
             }
             self.idx_within_source = context.idx_within_source
-            self.idx = idx
         elif isinstance(context, dict) and isinstance(response, dict):
             self.content = {
                 'context': context,
