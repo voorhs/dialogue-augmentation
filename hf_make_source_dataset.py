@@ -30,19 +30,11 @@ upper_bounds = {
     'Taskmaster1': min(upper_bound, 200),
 }
 
-
-from random import shuffle, seed as set_seet
-from math import ceil
 from tqdm import tqdm
-from tqdm.contrib.concurrent import process_map
-from functools import partial
-from typing import Tuple, List
 from tqdm import tqdm
 from mylib.utils.data import Dialogue, ContextResponsePair
 import json
-import os
-import pyarrow as pa
-from datasets import load_dataset
+from datasets import load_dataset, DatasetDict, Dataset
 
 
 def preprocess_dialogue(
@@ -91,7 +83,7 @@ def is_above_bound(ut, tokenizer, bound):
     return len(tokenizer(ut)['input_ids']) > bound
 
 
-def get_record_iterator(name, tokenizer, bound):
+def get_record_generator(name, tokenizer, bound):
     dataset = load_dataset('Salesforce/dialogstudio', name)['train']['log']
     for i, raw_dia in tqdm(enumerate(dataset), desc=f'parsing {name}'):
         dia = preprocess_dialogue(raw_dia, tokenizer, bound)
@@ -107,49 +99,30 @@ def get_record_iterator(name, tokenizer, bound):
         )
         dct = dia.asdict()
         dct['content'] = json.dumps(dct['content'])
-        yield pa.RecordBatch.from_pylist([dct])
+        yield dct
 
 
-def train_test_split(data: List[Dialogue], frac=0.9, seed=0):
-    """resulting sizes:
-    - train: `frac`
-    - test: `(1 - frac) // 2`
-    - val: `(1 - frac) // 2`"""
-    
-    set_seet(seed)
-    shuffle(data)
+# def make_pairs(dialogues):
+#     res = []
+#     for dia in tqdm(dialogues, desc='making pairs'):
+#         pairs = []
+#         for i in range(len(dia)-1):
+#             pairs.append((dia[:i+1], dia[i+1]))
+#         res.extend(pairs)
+#     shuffle(res)
+#     res = [ContextResponsePair(context=c, response=r, idx=i) for i, (c, r) in enumerate(res)]
+#     return res
 
-    # assign indices after shuffling the dataset
-    for i, dia in enumerate(data):
-        dia.idx = i
-
-    n_total = len(data)
-    train_size = ceil(frac * n_total)
-    test_size = (n_total - train_size) // 2
-    val_size = n_total - train_size - test_size
-
-    res = {
-        'train': data[:train_size],
-        'test': data[train_size:train_size+test_size],
-        'val': data[train_size+test_size:]
-    }
-
-    print('dataset splits sizes:')
-    print(f'{n_total=}, {train_size=}, {test_size=}, {val_size=}')
-
-    return res
-
-
-def make_pairs(dialogues):
-    res = []
-    for dia in tqdm(dialogues, desc='making pairs'):
-        pairs = []
-        for i in range(len(dia)-1):
-            pairs.append((dia[:i+1], dia[i+1]))
-        res.extend(pairs)
-    shuffle(res)
-    res = [ContextResponsePair(context=c, response=r, idx=i) for i, (c, r) in enumerate(res)]
-    return res
+def train_test_split(dataset: Dataset):
+    train_test = dataset.train_test_split(test_size=.1, shuffle=True, seed=0)
+    test_val = train_test['test'].train_test_split(test_size=.5, shuffle=False)
+    test_val['val'] = test_val['train']
+    res_dataset = DatasetDict({
+        'train': train_test['train'],
+        'test': test_val['test'],
+        'val': test_val['val']
+    })
+    return res_dataset
 
 
 if __name__ == "__main__":
@@ -157,7 +130,7 @@ if __name__ == "__main__":
     from collections import defaultdict
     from mylib.utils.training import seed_everything
     import itertools as it
-    import pyarrow.dataset as ds
+    from datasets import Dataset
 
     seed_everything(0)
 
@@ -169,41 +142,17 @@ if __name__ == "__main__":
     tokenizer = AutoTokenizer.from_pretrained('microsoft/mpnet-base')
 
     # load datasets from hugging face, parse, filter and merge into single list
-    record_iterator_list = []
-    for dataset_name in names:
-        iterator = get_record_iterator(dataset_name, tokenizer, upper_bounds[dataset_name])
-        record_iterator_list.append(iterator)
+    def chained_generator():
+        for dataset_name in names:
+            generator = get_record_generator(dataset_name, tokenizer, upper_bounds[dataset_name])
+            yield from generator
+
+    # main line of code that creats dataset
+    dialog_dataset = Dataset.from_generator(chained_generator, cache_dir='data-2/source-hf')
     
-    chained_iterator = it.chain.from_iterable(record_iterator_list)
-
-    ds.write_dataset(
-        data=chained_iterator,
-        base_dir='data-2/source',
-        max_rows_per_file=512,
-        max_rows_per_group=512,
-        schema=pa.schema([
-            ('content', pa.string()),
-            ('idx_within_source', pa.int32()),
-            ('source_dataset_name', pa.string()),
-        ]),
-        format='parquet',
-        use_threads=False
-    )
-
-
-    # # shuffle and define splits
-    # dialogues = train_test_split(merged_dataset)
-
-
-    # # save to file system
-    # import os
-    # root_dir = os.environ['ROOT_DIR']
-    # save_path = os.path.join(root_dir, 'data', 'source')
-
-    # for split, data in dialogues.items():
-    #     print(f'saving chunks for {split} dialogues')
-    #     path = os.path.join(save_path, split)
-    #     save_as_chunks(data, path, chunk_size=512)
+    # make splits and save to disk
+    dialog_dataset = train_test_split(dialog_dataset)
+    dialog_dataset.save_to_disk('data-2/source-hf', num_shards={'train': 1024, 'test': 128, 'val': 128})
 
     # # === context-response pairs dataset ===
 
