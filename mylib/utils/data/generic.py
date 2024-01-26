@@ -21,7 +21,7 @@ class Dialogue(BaseDictDType):
             speakers: List[int],
             source_dataset_name: str,
             idx_within_source: int,
-            idx: int,
+            # idx: int,
             **fields
         ):
         """add any extra `fields` if extra info is needed to be saved"""
@@ -35,7 +35,7 @@ class Dialogue(BaseDictDType):
         
         self.source_dataset_name = source_dataset_name
         self.idx_within_source = idx_within_source
-        self.idx = idx
+        # self.idx = idx
         
         for key, val in fields.items():
             setattr(self, key, val)
