@@ -1,4 +1,4 @@
-import os, shutil
+import os, shutil, json
 from datasets import load_from_disk
 from mylib.datamakers.utils import join, collect_chunks, obj_to_str
 
@@ -23,8 +23,19 @@ def remove_datasets(paths):
 
 
 def _gather(row: dict, content_keys):
-    row['pos'] = [row[k] for k in content_keys if k != 'content']
-    row['orig'] = row['content']
+    pos = []
+    for k in content_keys:
+        if k == 'content':
+            continue
+        pos.append({
+            'content': json.loads(row[k]),
+            'augmentation': k[8:],
+        })
+    row['pos'] = pos
+    row['orig'] = {
+        'content': json.loads(row['content']),
+        'augmentation': None
+    }
     return row
 
 
