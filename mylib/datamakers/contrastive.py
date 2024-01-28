@@ -1,4 +1,4 @@
-import os
+import os, shutil
 from datasets import load_from_disk
 from mylib.datamakers.utils import join, collect_chunks, obj_to_str
 
@@ -9,6 +9,34 @@ def source_to_parquet():
     source = load_from_disk(source_dataset)
     source = obj_to_str(source, col='content')
     source.to_parquet(source_parquet)
+    return source_parquet
+
+
+def remove_parquets(paths):
+    for path in paths:
+        os.remove(path)
+
+
+def remove_datasets(paths):
+    for path in paths:
+        shutil.rmtree(path)
+
+
+def _gather(row: dict, content_keys):
+    row['pos'] = [row[k] for k in content_keys if k != 'content']
+    row['orig'] = row['content']
+    return row
+
+
+def gather_positives_to_list(dataset):
+    row = dataset[0]
+    content_keys = [k for k in row.keys() if k.startswith('content')]
+    return dataset.map(
+        _gather,
+        fn_kwargs=dict(content_keys=content_keys),
+        cache_file_name='data-2/cache-2',
+        remove_columns=content_keys
+    )
 
 
 def main(path, names_in, name_out):
@@ -20,7 +48,7 @@ def main(path, names_in, name_out):
         )
 
     # convert to parquet all datasets
-    source_to_parquet()
+    source_parquet = source_to_parquet()
     parquet_paths = [os.path.join(path, f'{n}.parquet') for n in names_in]
     dataset_paths = [os.path.join(path, f'{n}-collected') for n in names_in]
 
@@ -28,8 +56,20 @@ def main(path, names_in, name_out):
         load_from_disk(d).to_parquet(p)
 
     # === finally ===
+    path_out = os.path.join('data-2', name_out)
+    path_out_tmp = path_out + '-tmp'
     join(
         path_in=path,
         names_in=['source']+names_in,
-        path_out=os.path.join('data-2', name_out),
+        path_out=path_out_tmp,
     )
+    
+    # convert to desired format
+    dataset = load_from_disk(path_out_tmp)
+    dataset = gather_positives_to_list(dataset)
+    dataset.save_to_disk(path_out)
+
+    # clear tmp files
+    parquet_paths += [source_parquet]
+    remove_parquets(parquet_paths)
+    remove_datasets(dataset_paths+[path_out_tmp])

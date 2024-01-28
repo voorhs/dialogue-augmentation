@@ -1,13 +1,13 @@
 # Algorithm:
-# 1. collect all json chunks into multiple hf datasets.Dataset
-# 2. join Datasets
-# 3. filter out those dialogues, that have no positives or negatives that are differ from original dia
+# 1. collect all json chunks into multiple datasets.Dataset
+# 2. covert them to pyarrow.parquet
+# 3. join parquets
+# 4. convert back to datasets.Dataset
 #
 # output samples must be of the following format:
 # cur_res = {
 #     'orig': original dialog
-#     'pos': list of positive augmentations,
-#     'neg': list of negative augmentations,
+#     'pos': list of positive augmentations
 # }
 
 if __name__ == "__main__":
