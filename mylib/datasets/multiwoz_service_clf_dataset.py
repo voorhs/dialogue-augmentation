@@ -1,19 +1,40 @@
 import os
-import json
-from bisect import bisect_right
+from datasets import load_from_disk
+from torch.utils.data import Dataset
 import torch
-from .source_dataset import DialogueDataset
 
-class MultiWOZServiceClfDataset(DialogueDataset):
+class MultiWOZServiceClfDataset(Dataset):
     services = [
             'attraction', 'bus', 'hospital',
             'hotel', 'restaurant', 'taxi', 'train'
         ]
+    def __init__(self, path, split):
+        self.path = path
+        self.split = split
+
+        self.dataset = load_from_disk(os.path.join(path, split))
+    
+    def __len__(self):
+        return self.dataset.num_rows
+    
     def __getitem__(self, i):
-        i_chunk = bisect_right(self.chunk_beginnings, x=i)
-        tmp = [0] + self.chunk_beginnings
-        idx_within_chunk = i - tmp[i_chunk]
-        item = json.load(open(os.path.join(self.path, self.chunk_names[i_chunk]), 'r'))[idx_within_chunk]
+        """
+        Loads one chunk and returns one training sample as
+        ```
+        {
+            "type": "array",
+            "items":
+            {
+                "type": "object",
+                "properties":
+                {
+                    "utterance": {"type": "string"},
+                    "speaker": {"type": "number"}
+                }
+            }
+        }
+        ```"""
+        item = self.dataset[i]
         
         dia = item['content']
         services = item['services']
@@ -21,4 +42,3 @@ class MultiWOZServiceClfDataset(DialogueDataset):
         target = torch.tensor([float(serv in services) for serv in self.services])    # multi one hot
         
         return dia, target
-    

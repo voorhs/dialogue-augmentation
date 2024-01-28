@@ -42,15 +42,10 @@ class Pairwise(nn.Module, LightningCkptLoadable, HParamsPuller):
         return self.target_encoder.device
     
     def get_encodings(self, batch):
-        if self.context_encoder.context_size is None:
-            context_slice = slice(None, None, None)
-        else:
-            context_slice = slice(-self.context_encoder.context_size, None, None)
-
         context_batch = []
         target_batch = []
         for pair in batch:
-            context_batch.append(pair['context'][context_slice])
+            context_batch.append(pair['context'])
             target_batch.append(pair['target'])
         
         target_encodings = self.target_encoder(target_batch)
@@ -106,34 +101,3 @@ class Pairwise(nn.Module, LightningCkptLoadable, HParamsPuller):
                 'target': dialogue[i]
             })
         return batch
-        
-
-class SymmetricPairwise(Pairwise):
-    def get_encodings(self, batch):
-        context_slice = slice(-self.context_encoder.context_size, None, None)
-        target_slice = slice(-self.context_encoder.context_size+1, None, None)
-
-        context_batch = []
-        target_batch = []
-        for pair in batch:
-            context_batch.append(pair['context'][context_slice])
-            target_batch.append(pair['context'][target_slice] + [pair['target']])
-        
-        target_encodings = self.target_encoder(target_batch)
-        context_encodings = self.context_encoder(context_batch)
-
-        context_encodings = self.context_projector(context_encodings)
-        target_encodings = self.target_projector(target_encodings)
-
-        return context_encodings, target_encodings
-    
-    @staticmethod
-    def make_batch_from_dia(dialogue):
-        batch = []
-        for i in range(1, len(dialogue)):
-            batch.append({
-                'context': dialogue[:i],
-                'target': dialogue[i]
-            })
-        return batch
-   

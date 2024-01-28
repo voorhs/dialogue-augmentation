@@ -1,35 +1,20 @@
-from torch.utils.data import Dataset
-from typing import Literal
-import math
-import json
 import os
-from ..utils.data import ContextResponsePair
+from torch.utils.data import Dataset
+from datasets import load_from_disk
+import random
 
 
 class ContextResponseDataset(Dataset):
-    chunk_size = 2048
-    def __init__(self, path, split: Literal['train', 'test', 'val'], fraction=1.):
-        self.split = split
+    def __init__(self, path, split, context_size, symmetric):
         self.path = path
+        self.split = split
+        self.context_size = context_size
+        self.symmetric = symmetric
 
-        if split == 'train':
-            max_n_chunks = 2556
-        elif split == 'test' or split == 'val':
-            max_n_chunks = 141
-
-        if isinstance(fraction, float):
-            self.fraction = min(1., max(0., fraction))
-            self.n_chunks = math.ceil(self.fraction * max_n_chunks)
-        elif isinstance(fraction, int):
-            self.fraction = min(max_n_chunks, max(1, fraction))
-            self.n_chunks = fraction
-        else:
-            raise ValueError('fraction must indicate number or fraction of chunks used (int or float)')
-
-        self.len = self.n_chunks * self.chunk_size
+        self.dataset = load_from_disk(os.path.join(path, split))
     
     def __len__(self):
-        return self.len
+        return self.dataset.num_rows
     
     def __getitem__(self, i):
         """
@@ -52,23 +37,21 @@ class ContextResponseDataset(Dataset):
                         }
                     }
                 },
-                "target":
-                {
-                    "type": "object",
-                    "properties":
-                    {
-                        "utterance": {"type": "string"},
-                        "speaker": {"type": "number"}
-                    }
-                }
+                "target": same as "context"
             }
         }
         ```"""
-        i_chunk = math.floor(i / self.chunk_size)
-        idx_within_chunk = i % self.chunk_size
+
+        dia = self.dataset[i]['content']
         
-        chunk_name = f'{i_chunk}.json'
-        chunk_path = os.path.join(self.path, self.split, chunk_name)
-        dct = json.load(open(chunk_path, 'r'))[idx_within_chunk]
+        if len(dia) == 2:
+            split_index = 1
+        else:
+            split_index = random.randint(a=1, b=len(dia)-2)
+        start = max(0, split_index-self.context_size)
+        end = split_index+self.context_size
         
-        return ContextResponsePair.get_train_sample(dct)
+        return {
+            'context': dia[start:split_index],
+            'target': dia[split_index:end] if self.symmetric else dia[split_index],
+        }

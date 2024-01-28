@@ -1,9 +1,7 @@
 import logging
-
 from transformers import AutoTokenizer
 from tqdm import tqdm
 from datasets import load_dataset, DatasetDict, Dataset
-
 from mylib.utils.training import seed_everything
 
 

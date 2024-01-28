@@ -111,12 +111,17 @@
 
 ## Дальнейшие планы по переходу с json chunks на hf dataset
 
-- реализовать natural join для аугментированных датасетов: `datasets.Dataset.to_parquet()` -> `pyarrow.Table.join()` -> `datasets.Dataset.from_parquet()` (получится hf-версия скрипта `make_contrastive_dialogue_train_data.py`)
-- сделать hf-версию для `filter_dataset_by_length.py`
-- сделать hf-версии для `train_dialogue_encoder.py`, ~~`train_listwise.py`~~, `train_pairwise.py`
-- протестить что все аугментации работают
-- что все `train_*.py` работают
-- мигрировать на кластер
+[x] реализовать natural join для аугментированных датасетов: `datasets.Dataset.to_parquet()` -> `pyarrow.Table.join()` -> `datasets.Dataset.from_parquet()` (получится hf-версия скрипта `make_contrastive_dialogue_train_data.py`)
+[x] сделать hf-версию для `filter_dataset_by_length.py`
+[x] сделать hf-версии для
+    [x] `train_dialogue_encoder.py`
+    [] ~~`train_listwise.py`~~
+    [x] `train_pairwise.py`
+[] что все `train_*.py` работают:
+    [x] `train_pairwise.py`
+    [] `train_dialogue_encoder.py`
+[] мигрировать на кластер
+[] обучить симметричный pairwise
 
 ## Setup Environment
 

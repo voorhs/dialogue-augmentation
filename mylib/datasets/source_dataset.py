@@ -1,32 +1,17 @@
-import json
 import os
-import os
-from bisect import bisect_right
-import numpy as np
 from torch.utils.data import Dataset
-import math
-import json
-from ..utils.data import Dialogue
+from datasets import load_from_disk
 
 
 class DialogueDataset(Dataset):
-    def __init__(self, path, fraction=1.):
+    def __init__(self, path, split):
         self.path = path
-        
-        chunk_names = [filename for filename in os.listdir(path) if filename.endswith('.json')]
-        self.chunk_names = sorted(chunk_names, key=lambda x: int(x.split('.')[0]))
-        
-        size = math.ceil(len(self.chunk_names) * fraction)
-        self.chunk_names = self.chunk_names[:size]
-        
-        chunk_sizes = [len(chunk) for chunk in (json.load(open(os.path.join(path, chunk_name))) for chunk_name in self.chunk_names)]
-        self.chunk_beginnings = np.cumsum(chunk_sizes).tolist()
+        self.split = split
 
-        self.n_chunks = len(self.chunk_names)
-        self.len = self.chunk_beginnings[-1]
+        self.dataset = load_from_disk(os.path.join(path, split))
     
     def __len__(self):
-        return self.len
+        return self.dataset.num_rows
     
     def __getitem__(self, i):
         """
@@ -45,8 +30,4 @@ class DialogueDataset(Dataset):
             }
         }
         ```"""
-        i_chunk = bisect_right(self.chunk_beginnings, x=i)
-        tmp = [0] + self.chunk_beginnings
-        idx_within_chunk = i - tmp[i_chunk]
-        item = json.load(open(os.path.join(self.path, self.chunk_names[i_chunk]), 'r'))[idx_within_chunk]
-        return Dialogue.get_train_sample(item)
+        return self.dataset[i]['content']

@@ -2,7 +2,8 @@ if __name__ == "__main__":
     
     from mylib.utils.training import get_argparser, init_environment
     ap = get_argparser()
-    ap.add_argument('--data-path', dest='data_path', required=True)
+    ap.add_argument('--contrastive-path', dest='contrastive_path', required=True)
+    ap.add_argument('--multiwoz-path', dest='multiwoz_path', required=True)
     ap.add_argument('--hf-model', dest='hf_model', required=True)
     args = ap.parse_args()
 
@@ -21,7 +22,6 @@ if __name__ == "__main__":
         do_periodic_warmup=False,
         lr=3e-6,
         finetune_layers=1,
-        path_to_gold_multiwoz_intent_similarities=os.path.join(args.data_path, 'multiwoz22', 'multiwoz_intent_similarities.npy')
     )
     
     model = BaselineDialogueEncoder(args.hf_model)
@@ -43,20 +43,17 @@ if __name__ == "__main__":
     # ======= DEFINE DATA =======
 
     import os
-    # root_dir = os.environ['ROOT_DIR']
-    contrastive_path = os.path.join(args.data_path, 'contrastive')
-    multiwoz_path = os.path.join(args.data_path, 'multiwoz22')
 
     from mylib.datasets import ContrastiveDataset, MultiWOZServiceClfDataset
-    contrastive_train = ContrastiveDataset(os.path.join(contrastive_path, 'train'))
+    contrastive_train = ContrastiveDataset(args.contrastive_path)
     
     multiwoz_train = MultiWOZServiceClfDataset(
-        path=os.path.join(multiwoz_path, 'train'),
-        fraction=learner_config.multiwoz_train_frac
+        path=args.multiwoz_path,
+        split='train'
     )
     multiwoz_val = MultiWOZServiceClfDataset(
-        path=os.path.join(multiwoz_path, 'validation'),
-        fraction=learner_config.multiwoz_val_frac
+        path=args.multiwoz_path,
+        split='validation'
     )
 
     from torch.utils.data import DataLoader

@@ -1,8 +1,5 @@
-import lightning.pytorch as pl
-from dataclasses import dataclass, asdict
-from typing import Tuple
-from torch import nn
 from ...learners import BaseLearner
+
 
 class LightningCkptLoadable:
     """Mixin for `nn.Module`"""
@@ -73,7 +70,7 @@ def train(learner, train_loader, val_loader, args, metric_to_monitor):
         suffix = ''
     
     logger = Logger(
-        save_dir=os.path.join(os.environ['ROOT_DIR'], 'logs', suffix),
+        save_dir=os.path.join('.', 'logs', suffix),
         name=args.name
     )
 

@@ -15,7 +15,7 @@ if __name__ == "__main__":
     ap.add_argument('--cuda', dest='cuda', required=True)
     ap.add_argument('--batch-size', dest='batch_size', required=True, type=int)
     ap.add_argument('--path-in', dest='path_in', default=default_path_in)
-    ap.add_argument('--skip-existing', dest='skip_existing', default=True)
+    ap.add_argument('--skip-existing', dest='skip_existing', action='store_true')
     args = ap.parse_args()
 
     from mylib.utils.training import init_environment
