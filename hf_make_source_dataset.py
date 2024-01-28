@@ -31,9 +31,6 @@ upper_bounds = {
 }
 
 from tqdm import tqdm
-from tqdm import tqdm
-from mylib.utils.data import Dialogue
-import json
 from datasets import load_dataset, DatasetDict, Dataset
 
 
@@ -83,6 +80,17 @@ def is_above_bound(ut, tokenizer, bound):
     return len(tokenizer(ut)['input_ids']) > bound
 
 
+class Counter:
+    def __init__(self):
+        self.counter = 0
+    
+    def __call__(self):
+        self.counter += 1
+        return self.counter
+
+counter = Counter()
+
+
 def get_record_generator(name, tokenizer, bound):
     dataset = load_dataset('Salesforce/dialogstudio', name)['train']['log']
     for i, raw_dia in tqdm(enumerate(dataset), desc=f'parsing {name}'):
@@ -90,14 +98,12 @@ def get_record_generator(name, tokenizer, bound):
         if dia is None:
             continue
         utterances, speakers = dia
-        dia = Dialogue(
-            utterances=utterances,
-            speakers=speakers,
-            source_dataset_name=name,
-            idx_within_source=i,
-            # idx=None
-        )
-        yield dia.asdict()
+        yield {
+            'content': [{'utterance': ut, 'speaker': sp} for ut, sp in zip(utterances, speakers)],
+            'source_dataset_name': name,
+            'idx_within_source': i,
+            'id': counter()
+        }
 
 
 def train_test_split(dataset: Dataset):
@@ -114,9 +120,7 @@ def train_test_split(dataset: Dataset):
 
 if __name__ == "__main__":
     from transformers import AutoTokenizer
-    from collections import defaultdict
     from mylib.utils.training import seed_everything
-    import itertools as it
     from datasets import Dataset
 
     seed_everything(0)

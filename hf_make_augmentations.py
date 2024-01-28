@@ -80,7 +80,7 @@ if __name__ == "__main__":
     from mylib.utils.training import init_environment
     init_environment(args)
 
-    
+    # ==== choose augmentation method ====
     from mylib.augmentations import *
 
     if args.method == 'back-translate':
@@ -122,25 +122,29 @@ if __name__ == "__main__":
     import json
     from tqdm.auto import tqdm
     
-    batch_size = args.batch_size
-    iterator = dataset.iter(batch_size=batch_size, drop_last_batch=False)
-    total = dataset.num_rows // batch_size
-    for i_batch, batch in tqdm(enumerate(iterator), desc=args.method, total=total):
+    dataset_iterator = dataset.iter(batch_size=args.batch_size, drop_last_batch=False)
+    batch_loader = tqdm(
+        enumerate(dataset_iterator),
+        desc=args.method,
+        total=dataset.num_rows // args.batch_size
+    )
+    
+    for i_batch, batch in batch_loader:
+        # check if chunk is already existed in directory
         chunk_name = f'{i_batch:05d}.json'
         if chunk_name in json_chunks_out and args.skip_existing:
             print(f'skipping {chunk_name}')
             continue
         
-        dialogues = [{key: batch[key][i] for key in batch.keys()} for i in range(batch_size)]
-        clean_dialogues = [dia['content'] for dia in dialogues if dia['content'] is not None]
+        # covert from batched format to list of dicts
+        dialogues = [{key: batch[key][i] for key in batch.keys()} for i in range(args.batch_size)]
+        orig_contents = [dia['content'] for dia in dialogues]
 
-        augmented = augmenter(clean_dialogues)
+        # === perform augmentations ===
+        aug_contents = augmenter(orig_contents)
 
-        for i, dia in enumerate(dialogues):
-            if dia['content'] is None:
-                augmented.insert(i, None)
-
-        for dia, aug in zip(dialogues, augmented):
+        # replace original content with augmented one
+        for dia, aug in zip(dialogues, aug_contents):
             dia['content'] = aug
             dia['method'] = args.method
 
