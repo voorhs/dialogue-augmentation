@@ -44,5 +44,5 @@ if __name__ == "__main__":
     
     pairs_dataset.save_to_disk(
         output_path,
-        num_shards={'train': 64, 'test': 32, 'val': 32}
+        num_shards={'train': 64, 'test': 8, 'val': 8}
     )

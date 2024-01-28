@@ -1,3 +1,12 @@
+import logging
+
+from transformers import AutoTokenizer
+from tqdm import tqdm
+from datasets import load_dataset, DatasetDict, Dataset
+
+from mylib.utils.training import seed_everything
+
+
 names = [
     'MS-DC',
     'MetaLWOZ',
@@ -29,9 +38,6 @@ upper_bounds = {
     'BiTOD': upper_bound,
     'Taskmaster1': min(upper_bound, 200),
 }
-
-from tqdm import tqdm
-from datasets import load_dataset, DatasetDict, Dataset
 
 
 def preprocess_dialogue(
@@ -88,10 +94,8 @@ class Counter:
         self.counter += 1
         return self.counter
 
-counter = Counter()
 
-
-def get_record_generator(name, tokenizer, bound):
+def get_record_generator(name, tokenizer, bound, counter: Counter):
     dataset = load_dataset('Salesforce/dialogstudio', name)['train']['log']
     for i, raw_dia in tqdm(enumerate(dataset), desc=f'parsing {name}'):
         dia = preprocess_dialogue(raw_dia, tokenizer, bound)
@@ -118,26 +122,20 @@ def train_test_split(dataset: Dataset):
     return res_dataset
 
 
-if __name__ == "__main__":
-    from transformers import AutoTokenizer
-    from mylib.utils.training import seed_everything
-    from datasets import Dataset
-
-    seed_everything(0)
-
-    output_path = 'data-2/source'
+def main(output_path, seed):
+    seed_everything(seed)
 
     # supress warnings about long sequences
-    import logging
     logging.getLogger("transformers.tokenization_utils_base").setLevel(logging.ERROR)
     
-    #! not the same as roberta, replace in future
+    # not the same as roberta
     tokenizer = AutoTokenizer.from_pretrained('microsoft/mpnet-base')
 
     # load datasets from hugging face, parse, filter and merge into single list
     def chained_generator():
+        counter = Counter()
         for dataset_name in names:
-            generator = get_record_generator(dataset_name, tokenizer, upper_bounds[dataset_name])
+            generator = get_record_generator(dataset_name, tokenizer, upper_bounds[dataset_name], counter)
             yield from generator
 
     # main line of code that creates dataset

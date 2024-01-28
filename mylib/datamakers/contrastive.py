@@ -1,7 +1,11 @@
 import os
 from tqdm import tqdm
 
-# join datasets, then filter out those dialogues, that have no positives or negatives that are differ from original dia
+# Algorithm:
+# 1. collect all json chunks into multiple hf datasets.Dataset
+# 2. join Datasets
+# 3. filter out those dialogues, that have no positives or negatives that are differ from original dia
+#
 # output samples must be of the following format:
 # cur_res = {
 #     'orig': original dialog
@@ -53,6 +57,7 @@ def make_contrastive_chunk(orig_chunk, pos_chunk, neg_chunk, allow_missing_neg):
 
 
 
+
 if __name__ == "__main__":
     import os
     root_dir = os.environ['ROOT_DIR']
@@ -90,6 +95,9 @@ if __name__ == "__main__":
     original_path = os.path.join(args.aug_path, args.orig_name)
 
     # == generate dataset ==
+
+    chunk_names = [filename for filename in os.listdir(positive_paths[0]) if filename.endswith('.json')]
+    chunk_names = sorted(chunk_names)[:80]
 
     if not os.path.exists(args.path_out):
         os.makedirs(args.path_out)

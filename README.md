@@ -117,3 +117,37 @@
 - протестить что все аугментации работают
 - что все `train_*.py` работают
 - мигрировать на кластер
+
+## Setup Environment
+
+```bash
+pip install torch torchvision torchaudio
+pip install transformers datasets
+pip install lightning
+pip install scikit-learn
+pip install nltk
+```
+
+python 3.8.10, install with [pyenv](https://github.com/pyenv/pyenv?tab=readme-ov-file#automatic-installer):
+```bash
+sudo apt update
+sudo apt install \
+    build-essential \
+    curl \
+    libbz2-dev \
+    libffi-dev \
+    liblzma-dev \
+    libncursesw5-dev \
+    libreadline-dev \
+    libsqlite3-dev \
+    libssl-dev \
+    libxml2-dev \
+    libxmlsec1-dev \
+    llvm \
+    make \
+    tk-dev \
+    wget \
+    xz-utils \
+    zlib1g-dev
+curl https://pyenv.run | bash
+```
