@@ -6,3 +6,5 @@ datasets
 lightning
 scikit-learn
 nltk
+sentencepiece
+sacremoses
