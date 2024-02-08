@@ -125,15 +125,12 @@
 
 ## Setup Environment
 
+python 3.8.10
 ```bash
-pip install torch torchvision torchaudio
-pip install transformers datasets
-pip install lightning
-pip install scikit-learn
-pip install nltk
+pip install -r requirements
 ```
 
-python 3.8.10, install with [pyenv](https://github.com/pyenv/pyenv?tab=readme-ov-file#automatic-installer):
+you can install specific python version with [pyenv](https://github.com/pyenv/pyenv?tab=readme-ov-file#automatic-installer):
 ```bash
 sudo apt update
 sudo apt install \

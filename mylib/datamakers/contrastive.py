@@ -4,8 +4,8 @@ from mylib.datamakers.utils import join, collect_chunks, obj_to_str
 
 
 def source_to_parquet():
-    source_dataset = 'data-2/source/train'
-    source_parquet = 'data-2/augmented/source.parquet'
+    source_dataset = 'data/source/train'
+    source_parquet = 'data/augmented/source.parquet'
     source = load_from_disk(source_dataset)
     source = obj_to_str(source, col='content')
     source.to_parquet(source_parquet)
@@ -45,7 +45,7 @@ def gather_positives_to_list(dataset):
     return dataset.map(
         _gather,
         fn_kwargs=dict(content_keys=content_keys),
-        cache_file_name='data-2/cache-2',
+        cache_file_name='data/cache-2',
         remove_columns=content_keys
     )
 
@@ -67,7 +67,7 @@ def main(path, names_in, name_out):
         load_from_disk(d).to_parquet(p)
 
     # === finally ===
-    path_out = os.path.join('data-2', name_out)
+    path_out = os.path.join('data', name_out)
     path_out_tmp = path_out + '-tmp'
     join(
         path_in=path,

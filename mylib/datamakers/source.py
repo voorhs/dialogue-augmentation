@@ -126,7 +126,7 @@ def main(output_path, seed):
     # supress warnings about long sequences
     logging.getLogger("transformers.tokenization_utils_base").setLevel(logging.ERROR)
     
-    # not the same as roberta
+    # not the same as roberta, but do not change it because al the bounds listed above are calculated for this tokenizer
     tokenizer = AutoTokenizer.from_pretrained('microsoft/mpnet-base')
 
     # load datasets from hugging face, parse, filter and merge into single list

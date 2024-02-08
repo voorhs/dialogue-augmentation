@@ -16,14 +16,14 @@ def get_augmenter(method):
             k=5,
             mask_utterance_level=True,
             fill_utterance_level=2,
-            model='microsoft/mpnet-base',
+            model='FacebookAI/roberta-base',
             device='cuda'
         )
     elif method == 'replace':
         augmenter = Replacer(
             k=3,
             fill_utterance_level=2,
-            model='microsoft/mpnet-base',
+            model='FacebookAI/roberta-base',
             device='cuda'
         )
     elif method == 'prune':
@@ -35,8 +35,7 @@ def get_augmenter(method):
 
 
 def get_path_out(dir_name):
-    root_dir = os.environ['ROOT_DIR']
-    path_out = os.path.join(root_dir, 'data-2', 'augmented', dir_name)
+    path_out = os.path.join(os.getcwd(), 'data', 'augmented', dir_name)
     
     if not os.path.exists(path_out):
         os.makedirs(path_out)
@@ -45,7 +44,7 @@ def get_path_out(dir_name):
 
 
 def get_batch_loader(batch_size, method_name):
-    dataset = load_from_disk('data-2/source/train')
+    dataset = load_from_disk('data/source/train')
 
     batch_loader = dataset.iter(batch_size=batch_size, drop_last_batch=False)
     return tqdm(

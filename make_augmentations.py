@@ -1,8 +1,8 @@
 if __name__ == "__main__":
     # ==== configure env ====
     import os
-    root_dir = os.environ['ROOT_DIR']
-    default_path_in = os.path.join(root_dir, 'data-2', 'source', 'train')
+    workdir = os.getcwd()
+    default_path_in = os.path.join(workdir, 'data', 'source', 'train')
 
     import argparse
     ap = argparse.ArgumentParser()
@@ -10,7 +10,7 @@ if __name__ == "__main__":
         'back-translate', 'insert', 'replace',
         'listwise-shuffler', 'prune', 'shuffle'
     ])
-    ap.add_argument('--seed', dest='seed', default=0)
+    ap.add_argument('--seed', dest='seed', default=0, type=int)
     ap.add_argument('--name', dest='name', required=True)
     ap.add_argument('--cuda', dest='cuda', required=True)
     ap.add_argument('--batch-size', dest='batch_size', required=True, type=int)

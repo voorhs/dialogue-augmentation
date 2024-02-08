@@ -56,4 +56,4 @@ def _cast(row, col):
 
 
 def obj_to_str(dataset: Dataset, col):
-    return dataset.map(_cast, fn_kwargs={'col': col}, cache_file_name='data-2/cache')
+    return dataset.map(_cast, fn_kwargs={'col': col}, cache_file_name='data/cache')
