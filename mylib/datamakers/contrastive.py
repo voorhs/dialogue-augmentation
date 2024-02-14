@@ -1,5 +1,5 @@
 import os, shutil, json
-from datasets import load_from_disk
+from datasets import load_from_disk, disable_caching
 from mylib.datamakers.utils import join, collect_chunks, obj_to_str
 
 
@@ -45,12 +45,14 @@ def gather_positives_to_list(dataset):
     return dataset.map(
         _gather,
         fn_kwargs=dict(content_keys=content_keys),
-        cache_file_name='data/cache-2',
+        # cache_file_name='data/cache-2',
         remove_columns=content_keys
     )
 
 
 def main(path, names_in, name_out):
+    disable_caching()
+
     # collect chunks of augmented datasets
     for name in names_in:
         collect_chunks(

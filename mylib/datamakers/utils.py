@@ -23,7 +23,7 @@ def collect_chunks(path_in, path_out):
     dataset = Dataset.from_generator(
         dia_generator,
         gen_kwargs={'path_in': path_in},
-        cache_dir=path_out
+        cache_dir=False
     )
     dataset.save_to_disk(path_out)
 
@@ -59,7 +59,11 @@ def _cast(row, col):
 
 
 def obj_to_str(dataset: Dataset, col):
-    return dataset.map(_cast, fn_kwargs={'col': col}, cache_file_name='data/cache')
+    return dataset.map(
+        _cast,
+        fn_kwargs={'col': col},
+        # cache_file_name=False
+    )
 
 
 def dump_cli_args(args: Namespace, path_out):
