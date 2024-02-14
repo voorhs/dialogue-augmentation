@@ -59,17 +59,17 @@ class DialogueEncoderLearner(BaseLearner):
         positives = [sample['pos'][i]['content'] for i, sample in zip(pos_indices, batch)]
 
         # select hard_negatives
-        hard_negatives = []
-        hard_negatives_counts = []
-        for sample in batch:
-            negs = [dia['content'] for dia in sample['neg']]
-            hard_negatives.extend(negs)
-            hard_negatives_counts.append(len(negs))
+        # hard_negatives = []
+        # hard_negatives_counts = []
+        # for sample in batch:
+        #     negs = [dia['content'] for dia in sample['neg']]
+        #     hard_negatives.extend(negs)
+        #     hard_negatives_counts.append(len(negs))
 
         # encode all dialogues
         origs_enc = F.normalize(self.model(origs), dim=1)                   # (B, H)
         positives_enc = F.normalize(self.model(positives), dim=1)           # (B, H)
-        hard_negatives_enc = F.normalize(self.model(hard_negatives), dim=1) # (B+, H)
+        # hard_negatives_enc = F.normalize(self.model(hard_negatives), dim=1) # (B+, H)
 
         # pos and neg scores
         pairwise_scores = (origs_enc @ positives_enc.T / self.config.temperature).exp()
@@ -78,19 +78,23 @@ class DialogueEncoderLearner(BaseLearner):
         neg_scores2 = pairwise_scores.sum(dim=1)
         
         # hard neg scores
-        repeats = torch.tensor(hard_negatives_counts, device=self.model.device)
-        origs_enc_repeated = torch.repeat_interleave(origs_enc, repeats=repeats, dim=0)
-        _hard_neg_scores = (origs_enc_repeated * hard_negatives_enc / self.config.temperature).sum(dim=1).exp()
-        hard_neg_scores = []
-        for i, count in enumerate(hard_negatives_counts):
-            start = sum(hard_negatives_counts[:i])
-            end = start + count
-            score = _hard_neg_scores[start:end].sum()
-            hard_neg_scores.append(score)
-        hard_neg_scores = torch.tensor(hard_neg_scores, device=self.model.device)
+        # repeats = torch.tensor(hard_negatives_counts, device=self.model.device)
+        # origs_enc_repeated = torch.repeat_interleave(origs_enc, repeats=repeats, dim=0)
+        # _hard_neg_scores = (origs_enc_repeated * hard_negatives_enc / self.config.temperature).sum(dim=1).exp()
+        # hard_neg_scores = []
+        # for i, count in enumerate(hard_negatives_counts):
+        #     start = sum(hard_negatives_counts[:i])
+        #     end = start + count
+        #     score = _hard_neg_scores[start:end].sum()
+        #     hard_neg_scores.append(score)
+        # hard_neg_scores = torch.tensor(hard_neg_scores, device=self.model.device)
 
         # compute contrastive loss with hard negatives
-        loss = (pos_scores / (neg_scores1 + neg_scores2 + hard_neg_scores)).log().neg().sum()
+        # loss = (pos_scores / (neg_scores1 + neg_scores2 + hard_neg_scores)).log().neg().sum()
+        # loss = (pos_scores / (neg_scores1 + neg_scores2)).log().neg().sum()
+        loss1 = (pos_scores / neg_scores1).log().neg().sum()
+        loss2 = (pos_scores / neg_scores2).log().neg().sum()
+        loss = loss1 + loss2
         
         # compute metric: retrieval accuracy
         topk_indicators = [i in top for i, top in enumerate(torch.topk(pairwise_scores, k=self.config.k, dim=1).indices)]
@@ -145,11 +149,11 @@ class DialogueEncoderLearner(BaseLearner):
             self.multiwoz_validation.extend(res)
     
     def on_validation_epoch_end(self) -> None:
-        corr_metric = get_multiwoz_intent_correlation_score(
-            self.multiwoz_train,
-            self.multiwoz_validation,
-            np.load(self.config.path_to_gold_multiwoz_intent_similarities)
-        )
+        # corr_metric = get_multiwoz_intent_correlation_score(
+        #     self.multiwoz_train,
+        #     self.multiwoz_validation,
+        #     np.load(self.config.path_to_gold_multiwoz_intent_similarities)
+        # )
 
         clf_metric = get_multiwoz_service_clf_score(
             self.multiwoz_train,
@@ -165,7 +169,7 @@ class DialogueEncoderLearner(BaseLearner):
             dictionary={
                 'clf_metric': clf_metric,
                 'ranking_metric': ranking_metric,
-                'corr_metric': corr_metric
+                # 'corr_metric': corr_metric
             },
             prog_bar=False,
             logger=True,
