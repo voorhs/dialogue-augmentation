@@ -10,6 +10,12 @@ def is_short_enough(row, tokenizer, upper_bound):
     input_ids = BaselineDialogueEncoder._tokenize(tokenizer, dialogues)['input_ids']
     return input_ids.shape[1] <= upper_bound
 
+def the_same_for_multiwoz(row, tokenizer, upper_bound):
+    """`dia` should be shorter than 512 minus number of SEP and CLS tokens"""
+    dialogues = [row['content']]
+    input_ids = BaselineDialogueEncoder._tokenize(tokenizer, dialogues)['input_ids']
+    return input_ids.shape[1] <= upper_bound
+
 
 def main(path_in, path_out, tokenizer, upper_bound=512):
     """Copies all json chunks of a dataset from `path_in` to `path_out`.
@@ -25,8 +31,13 @@ def main(path_in, path_out, tokenizer, upper_bound=512):
         os.makedirs(path_out)
 
     in_dataset = load_from_disk(path_in)
+    if 'pos' in in_dataset[0].keys():
+        is_accepted = is_short_enough
+    else:
+        is_accepted = the_same_for_multiwoz
+
     out_dataset = in_dataset.filter(
-        is_short_enough,
+        is_accepted,
         fn_kwargs=dict(
             tokenizer=tokenizer,
             upper_bound=upper_bound

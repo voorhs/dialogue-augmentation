@@ -123,7 +123,9 @@
 [] мигрировать на кластер
 [] обучить симметричный pairwise
 
-## Setup Environment
+## Try Yourself
+
+### Setup Environment
 
 python 3.8.10
 ```bash
@@ -153,3 +155,12 @@ sudo apt install \
     zlib1g-dev
 curl https://pyenv.run | bash
 ```
+
+### Algorithm
+
+
+1. make_source_dataset.py
+2. make_augmentations.py
+3. make_contrastive.py
+4. filter_dataset_by_length.py both for contrastive and multiwoz
+5. train_dialogue_encoder.py

@@ -1,5 +1,5 @@
 from tqdm import tqdm
-from datasets import load_dataset, DatasetDict, Dataset
+from datasets import load_dataset, DatasetDict, Dataset, disable_caching
 from mylib.utils.training import seed_everything
 
 
@@ -18,12 +18,13 @@ def get_record_generator(split):
 
 def main(output_path, seed):
     seed_everything(seed)
+    disable_caching()
     
     dataset = DatasetDict({
         split: Dataset.from_generator(
             get_record_generator,
             gen_kwargs=dict(split=split),
-            cache_dir=output_path
+            cache_dir=False
         ) for split in ['train', 'validation', 'test']
     }) 
     

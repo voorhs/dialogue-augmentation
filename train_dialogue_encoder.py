@@ -38,8 +38,6 @@ if __name__ == "__main__":
     else:
         learner = DialogueEncoderLearner(model, learner_config)
 
-    learner = DialogueEncoderLearner(model, learner_config)
-
     # ======= DEFINE DATA =======
 
     import os

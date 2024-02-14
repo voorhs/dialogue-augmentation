@@ -1,7 +1,7 @@
 import logging
 from transformers import AutoTokenizer
 from tqdm import tqdm
-from datasets import load_dataset, DatasetDict, Dataset
+from datasets import load_dataset, DatasetDict, Dataset, disable_caching
 from mylib.utils.training import seed_everything
 
 
@@ -122,6 +122,7 @@ def train_test_split(dataset: Dataset):
 
 def main(output_path, seed):
     seed_everything(seed)
+    disable_caching()
 
     # supress warnings about long sequences
     logging.getLogger("transformers.tokenization_utils_base").setLevel(logging.ERROR)
@@ -137,7 +138,10 @@ def main(output_path, seed):
             yield from generator
 
     # main line of code that creates dataset
-    dialog_dataset = Dataset.from_generator(chained_generator, cache_dir=output_path)
+    dialog_dataset = Dataset.from_generator(
+        chained_generator,
+        cache_dir=False
+    )
     
     # make splits and save to disk
     dialog_dataset = train_test_split(dialog_dataset)
