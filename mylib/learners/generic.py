@@ -6,8 +6,8 @@ from torch import nn
 
 @dataclass
 class BaseLearnerConfig:
-    lr: float = None
-    batch_size: int = None
+    lr: float = 3e-6
+    batch_size: int = 32
     warmup_period: int = None
     do_periodic_warmup: bool = False
     weight_decay: float = 1e-2

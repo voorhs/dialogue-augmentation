@@ -64,8 +64,3 @@ def obj_to_str(dataset: Dataset, col):
         fn_kwargs={'col': col},
         # cache_file_name=False
     )
-
-
-def dump_cli_args(args: Namespace, path_out):
-    now = datetime.now().strftime("%m-%d-%Y_%H:%M:%S")
-    yaml.dump(vars(args), open(os.path.join(path_out, f'cli_args_{now}.yml'), 'w'))

@@ -6,3 +6,4 @@ data-2
 .vscode
 .venv
 .python-version
+secrets.json

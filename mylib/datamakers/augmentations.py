@@ -5,7 +5,7 @@ from tqdm.auto import tqdm
 from datasets import load_from_disk, disable_caching
 
 from ..augmentations import *
-from .utils import dump_cli_args
+from ..utils import dump_cli_args
 
 
 def get_augmenter(method):

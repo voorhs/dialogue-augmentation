@@ -16,14 +16,11 @@ from sklearn.preprocessing import normalize as sklearn_normalize
 
 @dataclass
 class DialogueEncoderLearnerConfig(BaseLearnerConfig):
-    path_to_gold_multiwoz_intent_similarities: str = ''
-    k: int = 5
-    temperature: float = 0.05
-    loss: Literal['contrastive', 'ict', 'multiwoz_service_clf'] = 'contrastive'
-    finetune_layers: int = 0
-    contrastive_train_frac: float = 1.
-    multiwoz_train_frac: float = 1.
-    multiwoz_val_frac: float = 1.
+    k: int = 1
+    temperature: float = 0.1
+    loss: str = 'contrastive'   # 'contrastive' or 'multiwoz_service_clf'
+    finetune_layers: int = 1
+    hf_model: str = 'google-bert/bert-base-uncased'
 
 
 class DialogueEncoderLearner(BaseLearner):

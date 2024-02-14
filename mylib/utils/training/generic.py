@@ -1,4 +1,24 @@
 from ...learners import BaseLearner
+from dataclasses import dataclass
+from argparse import Namespace
+
+
+@dataclass
+class TrainerConfig:
+    name: str = None
+    n_workers: int = 8
+    n_epochs: int = None
+    seed: int = 0
+    cuda: str = None
+    interval: int = 300
+    logdir: str = './logs'
+    logger: str = 'tb'
+    resume_from: str = None
+    init_from: str = None
+    metric_for_checkpoint: str = None
+    save_last: bool = True
+    save_top_k: int = 1
+    mode: str = None
 
 
 class LightningCkptLoadable:
@@ -42,43 +62,54 @@ class HParamsPuller:
         return res
 
 
-def train(learner, train_loader, val_loader, args, metric_to_monitor):
+def train(learner, train_loader, val_loader, config: TrainerConfig, args: Namespace):
     from lightning.pytorch.callbacks import ModelCheckpoint, LearningRateMonitor
     import os
-
-    if args.logger != 'none':
-        checkpoint_callback = ModelCheckpoint(
-            monitor=metric_to_monitor,
-            save_last=True,
-            save_top_k=1,
-            mode='max',
-        )
-        lr_monitor = LearningRateMonitor(logging_interval='step')
-        callbacks = [checkpoint_callback, lr_monitor]
-    else:
-        callbacks = None
-
-    import lightning.pytorch as pl
-    if args.logger == 'tb':
-        Logger = pl.loggers.TensorBoardLogger
-        suffix = 'tensorboard'
-    elif args.logger == 'wb':
-        Logger = pl.loggers.WandbLogger
-        suffix = 'wandb'
-    elif args.logger == 'none':
-        Logger = lambda **kwargs: False
-        suffix = ''
     
-    logger = Logger(
-        save_dir=os.path.join('.', 'logs', suffix),
-        name=args.name
+    checkpoint_callback = ModelCheckpoint(
+        monitor=config.metric_for_checkpoint,
+        save_last=config.save_last,
+        save_top_k=config.save_top_k,
+        mode=config.mode,
     )
+    lr_monitor = LearningRateMonitor(logging_interval='step')
+    callbacks = [checkpoint_callback, lr_monitor]
+
+    if config.logger == 'comet':
+        import comet_ml
+    import lightning.pytorch as pl
+    from lightning.pytorch.loggers import TensorBoardLogger, WandbLogger, CometLogger
+    import json
+
+    if config.logger == 'tb':
+        logger = TensorBoardLogger(
+            save_dir=os.path.join('.', 'logs', 'tensorboard'),
+            name=config.name
+        )
+    elif config.logger == 'wb':
+        logger = WandbLogger(
+            save_dir=os.path.join('.', 'logs', 'wandb'),
+            name=config.name
+        )
+    elif config.logger == 'comet':
+        secrets = json.load(open('secrets.json', 'r'))
+        logger = CometLogger(
+            api_key=secrets['comet_api'],
+            workspace=secrets["workspace"],
+            save_dir=os.path.join('.', 'logs', 'comet'),
+            project_name=secrets["project_name"],
+            experiment_name=config.name,
+        )
+    else:
+        raise ValueError('unknown logger name')
+
+    logger.log_hyperparams(vars(args))
 
     trainer = pl.Trainer(
         # max_epochs=1,
-        max_time={'hours': 14},
+        # max_time={'hours': 14},
         
-        # max_time={'minutes': 10},
+        max_time={'minutes': 1},
         # max_steps=0,
 
         # hardware settings
@@ -86,8 +117,12 @@ def train(learner, train_loader, val_loader, args, metric_to_monitor):
         deterministic=False,
         precision="16-mixed",
 
+        # fraction of data to use
+        limit_train_batches=1.,
+        limit_val_batches=1.,
+
         # logging and checkpointing
-        val_check_interval=args.interval,
+        val_check_interval=config.interval,   # number of optimization steps between two validation runs
         # check_val_every_n_epoch=1,
         logger=logger,
         enable_progress_bar=False,
@@ -111,25 +146,12 @@ def train(learner, train_loader, val_loader, args, metric_to_monitor):
 
     trainer.fit(
         learner, train_loader, val_loader,
-        ckpt_path=args.resume_from
+        ckpt_path=config.resume_from
     )
 
     print('Finished at', datetime.now().strftime("%H:%M:%S %d-%m-%Y"))
 
-    trainer.validate(learner, val_loader)
-
-
-def get_argparser():
-    import argparse
-    ap = argparse.ArgumentParser()
-    ap.add_argument('--name', dest='name', default=None)
-    ap.add_argument('--cuda', dest='cuda', default='0')
-    ap.add_argument('--seed', dest='seed', default=0, type=int)
-    ap.add_argument('--interval', dest='interval', default=500, type=int)
-    ap.add_argument('--logger', dest='logger', choices=['none', 'tb', 'wb'], default='tb')
-    ap.add_argument('--resume-training-from', dest='resume_from', default=None)
-    ap.add_argument('--load-weights-from', dest='weights_from', default=None)
-    return ap
+    # trainer.validate(learner, val_loader, ckpt_path='best')
 
 
 def init_environment(args):
@@ -156,3 +178,31 @@ def seed_everything(seed: int):
     torch.cuda.manual_seed(seed)
     torch.backends.cudnn.deterministic = True
     torch.backends.cudnn.benchmark = True
+
+
+def config_to_argparser(container_classes):
+    from dataclasses import fields
+    def add_arguments(container_class, parser):
+        for field in fields(container_class):
+            parser.add_argument(
+                '--' + field.name.replace('_', '-'),
+                dest=field.name,
+                default=field.default,
+                type=field.type
+            )
+    
+    from argparse import ArgumentParser
+    parser = ArgumentParser()
+    
+    for cls in container_classes:
+        add_arguments(cls, parser)
+
+    return parser
+
+
+def retrieve_fields(namespace, contrainer_class):
+    from dataclasses import fields
+    res = {}
+    for field in fields(contrainer_class):
+        res[field.name] = getattr(namespace, field.name)
+    return res
