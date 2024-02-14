@@ -6,7 +6,7 @@ if __name__ == "__main__":
 
     import argparse
     ap = argparse.ArgumentParser()
-    ap.add_argument('--method', dest='method', required=True, choices=[
+    ap.add_argument('--method', dest='method_name', required=True, choices=[
         'back-translate', 'insert', 'replace',
         'listwise-shuffler', 'prune', 'shuffle'
     ])
@@ -24,4 +24,4 @@ if __name__ == "__main__":
     # ==== main ====
     from mylib.datamakers.augmentations import main
 
-    main(args.method, args.name, args.batch_size, args.skip_existing)
+    main(args)

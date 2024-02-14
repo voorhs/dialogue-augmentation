@@ -1,9 +1,11 @@
 import json, os
+from argparse import Namespace
 
 from tqdm.auto import tqdm
-from datasets import load_from_disk
+from datasets import load_from_disk, disable_caching
 
-from mylib.augmentations import *
+from ..augmentations import *
+from .utils import dump_cli_args
 
 
 def get_augmenter(method):
@@ -43,8 +45,9 @@ def get_path_out(dir_name):
     return path_out
 
 
-def get_batch_loader(batch_size, method_name):
-    dataset = load_from_disk('data/source/train')
+def get_batch_loader(batch_size, method_name, path_in):
+    disable_caching()
+    dataset = load_from_disk(path_in)
 
     batch_loader = dataset.iter(batch_size=batch_size, drop_last_batch=False)
     return tqdm(
@@ -54,27 +57,31 @@ def get_batch_loader(batch_size, method_name):
     )
 
 
-def convert(batch, batch_size):
+def convert(batch: dict):
     """covert from one batched format (dict of lists) to another batched format (list of dicts)"""
+    some_key = list(batch.keys())[0]
+    batch_size = len(batch[some_key])
     return [{key: batch[key][i] for key in batch.keys()} for i in range(batch_size)]
 
 
-def main(method_name, dir_name, batch_size, skip_existing):
-    augmenter = get_augmenter(method_name)
-    path_out = get_path_out(dir_name)
-    batch_loader = get_batch_loader(batch_size, method_name)
+def main(args: Namespace):
+    augmenter = get_augmenter(args.method_name)
+    path_out = get_path_out(args.name)
+    batch_loader = get_batch_loader(args.batch_size, args.method_name, args.path_in)
     json_chunks_out = sorted([filename for filename in os.listdir(path_out) if filename.endswith('.json')])
+    dump_cli_args(args, path_out)
     print('result will be saved to', path_out)
+
 
     for i_batch, batch in batch_loader:
         # check if chunk already exists in directory
         chunk_name = f'{i_batch:05d}.json'
-        if chunk_name in json_chunks_out and skip_existing:
+        if chunk_name in json_chunks_out and args.skip_existing:
             print(f'skipping {chunk_name}')
             continue
         
         # augment
-        batch = convert(batch, batch_size)
+        batch = convert(batch)
         orig_contents = [dia['content'] for dia in batch]
         aug_contents = augmenter(orig_contents)
 

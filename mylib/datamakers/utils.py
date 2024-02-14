@@ -1,4 +1,7 @@
-import os, json
+import os, json, yaml
+from argparse import Namespace
+from datetime import datetime
+
 from datasets import Dataset
 import pyarrow.parquet as pq
 
@@ -57,3 +60,8 @@ def _cast(row, col):
 
 def obj_to_str(dataset: Dataset, col):
     return dataset.map(_cast, fn_kwargs={'col': col}, cache_file_name='data/cache')
+
+
+def dump_cli_args(args: Namespace, path_out):
+    now = datetime.now().strftime("%m-%d-%Y_%H:%M:%S")
+    yaml.dump(vars(args), open(os.path.join(path_out, f'cli_args_{now}.yml'), 'w'))
