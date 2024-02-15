@@ -8,6 +8,8 @@ def get_record_generator(split):
     for i, sample in enumerate(dataset):
         uts = sample['turns']['utterance']
         sps = sample['turns']['speaker']
+        if len(sample['services']) > 1:
+            continue
         yield dict(
             content=[{'utterance': ut, 'speaker': sp} for ut, sp in zip(uts, sps)],
             source_dataset_name=f'multiwoz/{split}',

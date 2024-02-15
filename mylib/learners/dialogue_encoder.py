@@ -17,7 +17,7 @@ from ..embedding_benchmarks import all_embedding_metrics
 class DialogueEncoderLearnerConfig(BaseLearnerConfig):
     k: int = 1
     temperature: float = 0.1
-    loss: str = 'contrastive'   # 'contrastive' or 'multiwoz_service_clf'
+    loss: str = 'contrastive_cross'   # 'contrastive_cross', 'contrastive_symmetric', 'contrastive_bce', 'multiwoz_service_clf'
     finetune_layers: int = 1
     dialogue_model: str = 'baseline'    # 'baseline' or 'hssa' (may be something else will emerge in future)
 
@@ -36,12 +36,7 @@ class DialogueEncoderLearner(BaseLearner):
             self.clf_head = nn.Linear(self.model.get_hidden_size(), 7)
 
     def forward(self, batch):
-        if self.config.loss == 'contrastive':
-            return self._contrastive_step(batch)
-        if self.config.loss == 'ict':
-            raise NotImplementedError()
-        if self.config.loss == 'multiwoz_service_clf':
-            raise NotImplementedError()
+        return self._contrastive_step(batch)
 
     def _contrastive_step(self, batch):
         """`batch` is a list of samples from ContrastiveDataset"""
@@ -58,24 +53,19 @@ class DialogueEncoderLearner(BaseLearner):
         origs_enc = F.normalize(self.model(origs), dim=1)                   # (B, H)
         positives_enc = F.normalize(self.model(positives), dim=1)           # (B, H)
 
-        # pos and neg scores
-        pairwise_scores = (origs_enc @ positives_enc.T / self.config.temperature).exp()
-        pos_scores = pairwise_scores.diag()
-        neg_scores1 = pairwise_scores.sum(dim=0)
-        neg_scores2 = pairwise_scores.sum(dim=1)
-        
-        # compute contrastive loss with hard negatives
-        # loss = (pos_scores / (neg_scores1 + neg_scores2 + hard_neg_scores)).log().neg().sum()
-        # loss = (pos_scores / (neg_scores1 + neg_scores2)).log().neg().sum()
-        loss1 = (pos_scores / neg_scores1).log().neg().sum()
-        loss2 = (pos_scores / neg_scores2).log().neg().sum()
-        loss = loss1 + loss2
+        # randomly swap correponding x and y to prevent from learning grammatics
+        batch_size = len(batch)
+        swap_or_not = torch.randn(batch_size) > 0
+        origs_enc[swap_or_not], positives_enc[swap_or_not] = positives_enc[swap_or_not], origs_enc[swap_or_not]
+
+        # contrastive loss
+        pairwise_scores = (origs_enc @ positives_enc.T) / self.config.temperature
+        loss = contrastive_loss(pairwise_scores, self.config.loss)
         
         # compute metric: retrieval accuracy
-        topk_indicators = [i in top for i, top in enumerate(torch.topk(pairwise_scores, k=self.config.k, dim=1).indices)]
-        topk_accuracy = np.mean(topk_indicators)
+        metrics = all_accuracies(pairwise_scores)
 
-        return loss, topk_accuracy
+        return loss, metrics
 
     def _multiwoz_service_clf_step(self, batch):
         """`batch` is a list of samples from MultiWOZServiceClfDataset"""
@@ -91,7 +81,7 @@ class DialogueEncoderLearner(BaseLearner):
         return loss, metric
 
     def training_step(self, batch, batch_idx):
-        loss, metric = self.forward(batch)
+        loss, metrics = self.forward(batch)
         self.log(
             name='train_loss',
             value=loss,
@@ -101,9 +91,8 @@ class DialogueEncoderLearner(BaseLearner):
             on_epoch=True,
             batch_size=self.config.batch_size
         )
-        self.log(
-            name='train_metric',
-            value=metric,
+        self.log_dict(
+            dictionary=metrics,
             prog_bar=False,
             logger=True,
             on_step=True,
@@ -157,3 +146,46 @@ class DialogueEncoderLearner(BaseLearner):
             lr_lambda=lr_foo
         )
         return {"optimizer": optimizer, "lr_scheduler": {"scheduler": scheduler, "interval": "step", 'frequency': 1}}
+
+
+def contrastive_loss(scores, name):
+    if name == 'contrastive_symmetric':
+        fn = contrastive_symmetric
+    if name == 'contrastive_cross':
+        fn = contrastive_cross
+    if name == 'contrastive_bce':
+        fn = contrastive_bce
+    
+    return fn(scores)
+
+
+def contrastive_symmetric(scores):
+    batch_size = scores.shape[0]
+    targets = torch.eye(batch_size, device=scores.device)
+    loss_1 = F.cross_entropy(scores, targets, reduction='mean')
+    loss_2 = F.cross_entropy(scores.T, targets, reduction='mean')
+    loss = loss_1 + loss_2
+    return loss
+
+
+def contrastive_cross(scores):
+    pos_scores = scores.diag()
+    neg_scores1 = scores.sum(dim=0)
+    neg_scores2 = scores.sum(dim=1)
+    loss = (pos_scores / (neg_scores1 + neg_scores2 - pos_scores)).log().neg().sum()
+    return loss
+
+
+def contrastive_bce(scores):
+    batch_size = scores.shape[0]
+    targets = torch.eye(batch_size, device=scores.device)
+    loss = F.binary_cross_entropy_with_logits(scores, targets, reduction='mean')
+    return loss
+
+
+def all_accuracies(scores):
+    res = {}
+    for k in [1, 3, 5, 10, 20]:
+        topk_indicators = [i in top for i, top in enumerate(torch.topk(scores, k=k, dim=1).indices)]
+        res[f'train_accuracy@{k}'] = np.mean(topk_indicators)
+    return res

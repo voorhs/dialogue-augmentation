@@ -117,11 +117,44 @@
     [x] `train_dialogue_encoder.py`
     [] ~~`train_listwise.py`~~
     [x] `train_pairwise.py`
-[] что все `train_*.py` работают:
+[x] что все `train_*.py` работают:
     [x] `train_pairwise.py`
     [] `train_dialogue_encoder.py`
-[] мигрировать на кластер
+[x] мигрировать на кластер
 [] обучить симметричный pairwise
+
+## Виды контрастив лоссов
+
+1d loss is equivalent to $p(y|x)p(x|y)$
+$$
+-\log{\exp\cos(x,y)\over\sum_{\tilde y}\exp\cos(x,\tilde y)}-\log{\exp\cos(x,y)\over\sum_{\tilde x}\exp\cos(\tilde x,y)}
+$$
+
+2d loss
+$$
+-\log{\exp\cos(x,y)\over\sum_{\tilde x,\tilde y}\exp\cos(\tilde x,\tilde y)}
+$$
+
+my proposal 0 (the first term from 1d loss)
+$$
+-\log{\exp\cos(x,y)\over\sum_{\tilde y}\exp\cos(x,\tilde y)}
+$$
+
+my proposal 1
+$$
+-\log{\exp\cos(x_i,y_i)\over\sum_{j=1,j\neq i}^B\exp\cos(x_i,y_j)+\exp\cos(x_j,y_i)}
+$$
+
+my proposal 2
+$$
+-\log\sigma(\cos(x_i,y_i))-\sum_{j=1,j\neq i}^B[\log\sigma(-\cos(x_i,y_j))+\log\sigma(-\cos(x_j,y_i))]
+$$
+
+add random swap between x and y to prevent learning grammatics
+
+я вижу так:
+- последним двум лоссам можно поставить в соответствие конкретное вероятностное распределение к которому ведет шаг оптимизации
+- но последние два лосса возможно сильно делают объекты в батче зависимыми, при том что очев батч случайный
 
 ## Try Yourself
 
