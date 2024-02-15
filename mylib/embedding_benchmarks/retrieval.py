@@ -15,7 +15,7 @@ def all_retrieval_metrics(X_train, Y_train, X_val, Y_val):
     """
 
     preds = X_val @ X_train.T
-    targets = Y_val @ Y_train.T
+    targets = (Y_val @ Y_train.T) > 0
 
     train_size = X_train.shape[0]
     val_size = X_val.shape[0]    
@@ -28,6 +28,6 @@ def all_retrieval_metrics(X_train, Y_train, X_val, Y_val):
             if k is not None:
                 metric_name = metric_name + f'_{k}'
             
-            res[metric_name] = metric(top_k=k).compute(preds, targets, indexes)
+            res[metric_name] = metric(top_k=k)(preds, targets, indexes)
 
     return res

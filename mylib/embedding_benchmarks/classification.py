@@ -38,9 +38,10 @@ def all_classification_metrics(X_train, Y_train, X_val, Y_val):
     } 
 
     # knn
-    knn = BatchedKNNClassifier(batch_size=256)
+    batch_size = min(256, X_val.shape[0])
+    knn = BatchedKNNClassifier(n_neighbors=50, batch_size=batch_size)
     knn.fit(X_train, Y_train)
-    k_distances, k_indices = knn.kneighbors(X_train, return_distance=True)
+    k_distances, k_indices = knn.kneighbors(X_val, return_distance=True)
 
     for k in [1, 5, 10, 50]:
         y_pred = knn._predict_precomputed(k_indices[:, :k], k_distances[:, :k])
