@@ -3,19 +3,16 @@ import torch
 from torchmetrics.functional.classification import multiclass_confusion_matrix
 from torchmetrics.functional.clustering import v_measure_score
 
-from .utils import prepare_data
 
-
-def all_clusterization_metrics(train_dataset, val_dataset):
+def all_clusterization_metrics(X_train, Y_train, X_val, Y_val):
     """
     Computes:
     - purity
     - v-measure
     
-    train_dataset: tuple of embedding matrix (N, d) and targets (N, k)
-    val_dataset: same
+    X_train: embedding tensor (N, d)
+    Y_train: targets (N, k) with zeros and ones
     """
-    X_train, _, X_val, Y_val = prepare_data(train_dataset, val_dataset)
 
     n_classes = Y_val.shape[1]
     kmeans = KMeans(n_classes, random_state=0)

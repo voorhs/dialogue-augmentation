@@ -1,2 +1,0 @@
-from .retrieval import all_retrieval_metrics
-from .clusterization import all_clusterization_metrics

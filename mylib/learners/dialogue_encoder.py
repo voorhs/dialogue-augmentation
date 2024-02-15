@@ -1,17 +1,16 @@
-import numpy as np
 from dataclasses import dataclass
+
 from torch.optim import AdamW
 from torch.optim.lr_scheduler import LambdaLR
 import torch.nn as nn
 import torch
-from typing import Literal
 import torch.nn.functional as F
 from torchmetrics.functional.classification import multilabel_f1_score
-from sklearn.neural_network import MLPClassifier
-from sklearn.metrics import f1_score, average_precision_score
-from scipy.stats import pearsonr
+
+import numpy as np
+
 from .generic import BaseLearnerConfig, BaseLearner
-from sklearn.preprocessing import normalize as sklearn_normalize
+from ..embedding_benchmarks import all_embedding_metrics
 
 
 @dataclass
@@ -115,8 +114,8 @@ class DialogueEncoderLearner(BaseLearner):
     
     def validation_step(self, batch, batch_idx, dataloader_idx):
         dialogues = [dia for dia, _ in batch]
-        targets = torch.stack([tar for _, tar in batch], dim=0).detach().cpu().numpy()
-        embeddings = self.model(dialogues).detach().cpu().numpy()
+        targets = torch.stack([tar for _, tar in batch], dim=0).detach().cpu()
+        embeddings = self.model(dialogues).detach().cpu()
         res = list(zip(embeddings, targets))
 
         if dataloader_idx == 0:
@@ -125,28 +124,11 @@ class DialogueEncoderLearner(BaseLearner):
             self.multiwoz_validation.extend(res)
     
     def on_validation_epoch_end(self) -> None:
-        # corr_metric = get_multiwoz_intent_correlation_score(
-        #     self.multiwoz_train,
-        #     self.multiwoz_validation,
-        #     np.load(self.config.path_to_gold_multiwoz_intent_similarities)
-        # )
-
-        clf_metric = get_multiwoz_service_clf_score(
-            self.multiwoz_train,
-            self.multiwoz_validation
-        )
-
-        ranking_metric = get_multiwoz_service_ranking_score(
-            self.multiwoz_train,
-            self.multiwoz_validation
-        )
+        
+        metrics = all_embedding_metrics(self.multiwoz_train, self.multiwoz_validation)
 
         self.log_dict(
-            dictionary={
-                'clf_metric': clf_metric,
-                'ranking_metric': ranking_metric,
-                # 'corr_metric': corr_metric
-            },
+            dictionary=metrics,
             prog_bar=False,
             logger=True,
             on_step=False,
@@ -175,64 +157,3 @@ class DialogueEncoderLearner(BaseLearner):
             lr_lambda=lr_foo
         )
         return {"optimizer": optimizer, "lr_scheduler": {"scheduler": scheduler, "interval": "step", 'frequency': 1}}
-
-
-def get_multiwoz_service_clf_score(train_dataset, val_dataset, n_epochs=2):
-    # configure model
-    clf = MLPClassifier(
-        batch_size=32,
-        learning_rate_init=5e-4,
-        max_iter=n_epochs
-    )
-
-    # configure data
-    X_train = np.stack([emb for emb, _ in train_dataset], axis=0)
-    y_train = np.stack([tar for _, tar in train_dataset], axis=0)
-    X_val = np.stack([emb for emb, _ in val_dataset], axis=0)
-    y_val = np.stack([tar for _, tar in val_dataset], axis=0)
-    
-    # train model
-    clf.fit(X_train, y_train)
-
-    # score model
-    y_pred = clf.predict(X_val)
-    score = f1_score(y_val, y_pred, average='macro', zero_division=0)
-    
-    return score
-
-
-def get_multiwoz_service_ranking_score(train_dataset, val_dataset):
-    # configure data
-    X_train = np.stack([emb for emb, _ in train_dataset], axis=0)
-    Y_train_raw = np.stack([tar for _, tar in train_dataset], axis=0)
-    X_val = np.stack([emb for emb, _ in val_dataset], axis=0)
-    Y_val_raw = np.stack([tar for _, tar in val_dataset], axis=0)
-    
-    X_train = sklearn_normalize(X_train, axis=1)
-    X_val = sklearn_normalize(X_val, axis=1)
-
-    avg_scores = []
-    for x_val, y_val_raw in zip(X_val, Y_val_raw):
-        # indicates that train sample and val sample has at least one common service
-        labels = np.sum(Y_train_raw * y_val_raw[None, :], axis=1) > 0
-
-        # cosine similarities
-        scores = X_train @ x_val
-
-        avg_scores.append(average_precision_score(labels, scores))
-    
-    map_score = sum(avg_scores) / len(avg_scores)
-    return map_score
-
-
-def get_multiwoz_intent_correlation_score(train_dataset, val_dataset, gold_intent_similarities):
-    X_train = np.stack([emb for emb, _ in train_dataset], axis=0)
-    X_val = np.stack([emb for emb, _ in val_dataset], axis=0)
-
-    X_train = sklearn_normalize(X_train, axis=1)
-    X_val = sklearn_normalize(X_val, axis=1)
-
-    pred_intent_similatities = X_train @ X_val.T
-    corr_score = pearsonr(pred_intent_similatities.flatten(), gold_intent_similarities.flatten()).statistic
-    
-    return corr_score
