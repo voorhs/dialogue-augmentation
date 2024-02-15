@@ -109,13 +109,15 @@ def train(learner, train_loader, val_loader, config: TrainerConfig, args: Namesp
         # max_epochs=1,
         # max_time={'hours': 14},
         
-        max_time={'minutes': 1},
+        max_time={'minutes': 10},
         # max_steps=0,
 
         # hardware settings
         accelerator='gpu',
         deterministic=False,
         precision="16-mixed",
+        devices=-1,
+        strategy='ddp',
 
         # fraction of data to use
         limit_train_batches=1.,
@@ -138,8 +140,8 @@ def train(learner, train_loader, val_loader, config: TrainerConfig, args: Namesp
         num_sanity_val_steps=False
     )
 
-    if args.resume_from is None:
-        trainer.validate(learner, val_loader)
+    # if args.resume_from is None:
+    #     trainer.validate(learner, val_loader)
 
     from datetime import datetime
     print('Started at', datetime.now().strftime("%H:%M:%S %d-%m-%Y"))

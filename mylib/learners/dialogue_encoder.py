@@ -89,7 +89,8 @@ class DialogueEncoderLearner(BaseLearner):
             logger=True,
             on_step=True,
             on_epoch=True,
-            batch_size=self.config.batch_size
+            batch_size=self.config.batch_size,
+            sync_dist=True
         )
         self.log_dict(
             dictionary=metrics,
@@ -97,7 +98,8 @@ class DialogueEncoderLearner(BaseLearner):
             logger=True,
             on_step=True,
             on_epoch=True,
-            batch_size=self.config.batch_size
+            batch_size=self.config.batch_size,
+            sync_dist=True
         )
         return loss
     
@@ -116,12 +118,17 @@ class DialogueEncoderLearner(BaseLearner):
         
         metrics = all_embedding_metrics(self.multiwoz_train, self.multiwoz_validation)
 
+        for key, val in metrics.items():
+            if not isinstance(val, torch.Tensor):
+                metrics[key] = torch.tensor(val, device=self.device)
+
         self.log_dict(
             dictionary=metrics,
             prog_bar=False,
             logger=True,
             on_step=False,
-            on_epoch=True
+            on_epoch=True,
+            sync_dist=True
         )
 
         self.multiwoz_train.clear()
@@ -169,6 +176,7 @@ def contrastive_symmetric(scores):
 
 
 def contrastive_cross(scores):
+    scores = scores.exp()
     pos_scores = scores.diag()
     neg_scores1 = scores.sum(dim=0)
     neg_scores2 = scores.sum(dim=1)
@@ -186,6 +194,8 @@ def contrastive_bce(scores):
 def all_accuracies(scores):
     res = {}
     for k in [1, 3, 5, 10, 20]:
+        if scores.shape[0] <= k:
+            continue
         topk_indicators = [i in top for i, top in enumerate(torch.topk(scores, k=k, dim=1).indices)]
         res[f'train_accuracy@{k}'] = np.mean(topk_indicators)
     return res

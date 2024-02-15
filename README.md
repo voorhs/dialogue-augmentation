@@ -189,6 +189,11 @@ sudo apt install \
 curl https://pyenv.run | bash
 ```
 
+Train dialogue encoder
+```bash
+python3 train_dialogue_encoder.py --hf-model google-bert/bert-base-uncased --contrastive-path data/filtered-by-length/ --multiwoz-path data/multiwoz-filtered/ --cuda "0,1,2,4,5,6,7" --logger tb --mode max --pooling cls --metric-for-checkpoint logreg_accuracy --batch-size 32 --finetune-layers 6
+```
+
 ### Algorithm
 
 
