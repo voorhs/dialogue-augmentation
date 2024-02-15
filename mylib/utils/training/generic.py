@@ -205,4 +205,4 @@ def retrieve_fields(namespace, contrainer_class):
     res = {}
     for field in fields(contrainer_class):
         res[field.name] = getattr(namespace, field.name)
-    return res
+    return contrainer_class(**res)

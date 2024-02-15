@@ -2,14 +2,16 @@ if __name__ == "__main__":
 
     from mylib.utils.training import config_to_argparser, retrieve_fields, TrainerConfig
     from mylib.learners import DialogueEncoderLearner, DialogueEncoderLearnerConfig as LearnerConfig
+    from mylib.modeling.dialogue.baseline_dialogue_encoder import BaselineDialogueEncoderConfig as ModelConfig
     
-    ap = config_to_argparser([LearnerConfig, TrainerConfig])
+    ap = config_to_argparser([ModelConfig, LearnerConfig, TrainerConfig])
     ap.add_argument('--contrastive-path', dest='contrastive_path', required=True)
     ap.add_argument('--multiwoz-path', dest='multiwoz_path', required=True)
     args = ap.parse_args()
 
-    learner_config = LearnerConfig(**retrieve_fields(args, LearnerConfig))
-    trainer_config = TrainerConfig(**retrieve_fields(args, TrainerConfig))
+    model_config = retrieve_fields(args, ModelConfig)
+    learner_config = retrieve_fields(args, LearnerConfig)
+    trainer_config = retrieve_fields(args, TrainerConfig)
 
     from mylib.utils.training import init_environment
     init_environment(args)
@@ -62,7 +64,7 @@ if __name__ == "__main__":
     from mylib.modeling.dialogue import BaselineDialogueEncoder
     from mylib.utils.training import freeze_hf_model
     
-    model = BaselineDialogueEncoder(learner_config.hf_model)
+    model = BaselineDialogueEncoder(model_config)
     freeze_hf_model(model.model, learner_config.finetune_layers)
 
     # ======= DEFINE LEARNER =======

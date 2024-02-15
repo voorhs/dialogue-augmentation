@@ -20,7 +20,7 @@ class DialogueEncoderLearnerConfig(BaseLearnerConfig):
     temperature: float = 0.1
     loss: str = 'contrastive'   # 'contrastive' or 'multiwoz_service_clf'
     finetune_layers: int = 1
-    hf_model: str = 'google-bert/bert-base-uncased'
+    dialogue_model: str = 'baseline'    # 'baseline' or 'hssa' (may be something else will emerge in future)
 
 
 class DialogueEncoderLearner(BaseLearner):
@@ -55,18 +55,9 @@ class DialogueEncoderLearner(BaseLearner):
         
         positives = [sample['pos'][i]['content'] for i, sample in zip(pos_indices, batch)]
 
-        # select hard_negatives
-        # hard_negatives = []
-        # hard_negatives_counts = []
-        # for sample in batch:
-        #     negs = [dia['content'] for dia in sample['neg']]
-        #     hard_negatives.extend(negs)
-        #     hard_negatives_counts.append(len(negs))
-
         # encode all dialogues
         origs_enc = F.normalize(self.model(origs), dim=1)                   # (B, H)
         positives_enc = F.normalize(self.model(positives), dim=1)           # (B, H)
-        # hard_negatives_enc = F.normalize(self.model(hard_negatives), dim=1) # (B+, H)
 
         # pos and neg scores
         pairwise_scores = (origs_enc @ positives_enc.T / self.config.temperature).exp()
@@ -74,18 +65,6 @@ class DialogueEncoderLearner(BaseLearner):
         neg_scores1 = pairwise_scores.sum(dim=0)
         neg_scores2 = pairwise_scores.sum(dim=1)
         
-        # hard neg scores
-        # repeats = torch.tensor(hard_negatives_counts, device=self.model.device)
-        # origs_enc_repeated = torch.repeat_interleave(origs_enc, repeats=repeats, dim=0)
-        # _hard_neg_scores = (origs_enc_repeated * hard_negatives_enc / self.config.temperature).sum(dim=1).exp()
-        # hard_neg_scores = []
-        # for i, count in enumerate(hard_negatives_counts):
-        #     start = sum(hard_negatives_counts[:i])
-        #     end = start + count
-        #     score = _hard_neg_scores[start:end].sum()
-        #     hard_neg_scores.append(score)
-        # hard_neg_scores = torch.tensor(hard_neg_scores, device=self.model.device)
-
         # compute contrastive loss with hard negatives
         # loss = (pos_scores / (neg_scores1 + neg_scores2 + hard_neg_scores)).log().neg().sum()
         # loss = (pos_scores / (neg_scores1 + neg_scores2)).log().neg().sum()
