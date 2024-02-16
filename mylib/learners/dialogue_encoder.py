@@ -118,9 +118,12 @@ class DialogueEncoderLearner(BaseLearner):
         
         metrics = all_embedding_metrics(self.multiwoz_train, self.multiwoz_validation)
 
+        # https://github.com/Lightning-AI/pytorch-lightning/issues/18803
         for key, val in metrics.items():
             if not isinstance(val, torch.Tensor):
                 metrics[key] = torch.tensor(val, device=self.device)
+            else:
+                metrics[key] = val.to(self.device)
 
         self.log_dict(
             dictionary=metrics,

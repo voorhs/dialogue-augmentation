@@ -10,7 +10,7 @@ class TrainerConfig:
     n_epochs: int = None
     seed: int = 0
     cuda: str = None
-    interval: int = 300
+    # interval: int = 4000
     logdir: str = './logs'
     logger: str = 'tb'
     resume_from: str = None
@@ -107,9 +107,9 @@ def train(learner, train_loader, val_loader, config: TrainerConfig, args: Namesp
 
     trainer = pl.Trainer(
         # max_epochs=1,
-        # max_time={'hours': 14},
+        max_time={'hours': 24},
         
-        max_time={'minutes': 10},
+        # max_time={'minutes': 2},
         # max_steps=0,
 
         # hardware settings
@@ -124,8 +124,8 @@ def train(learner, train_loader, val_loader, config: TrainerConfig, args: Namesp
         limit_val_batches=1.,
 
         # logging and checkpointing
-        val_check_interval=config.interval,   # number of optimization steps between two validation runs
-        # check_val_every_n_epoch=1,
+        # val_check_interval=config.interval,   # number of optimization steps between two validation runs
+        check_val_every_n_epoch=1,
         logger=logger,
         enable_progress_bar=False,
         profiler=None,
@@ -143,15 +143,15 @@ def train(learner, train_loader, val_loader, config: TrainerConfig, args: Namesp
     # if args.resume_from is None:
     #     trainer.validate(learner, val_loader)
 
-    from datetime import datetime
-    print('Started at', datetime.now().strftime("%H:%M:%S %d-%m-%Y"))
+    # from datetime import datetime
+    # print('Started at', datetime.now().strftime("%H:%M:%S %d-%m-%Y"))
 
     trainer.fit(
         learner, train_loader, val_loader,
         ckpt_path=config.resume_from
     )
 
-    print('Finished at', datetime.now().strftime("%H:%M:%S %d-%m-%Y"))
+    # print('Finished at', datetime.now().strftime("%H:%M:%S %d-%m-%Y"))
 
     # trainer.validate(learner, val_loader, ckpt_path='best')
 
