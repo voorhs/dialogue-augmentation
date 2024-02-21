@@ -3,7 +3,6 @@ from typing import List
 from torch import nn
 from transformers import AutoModel, AutoTokenizer
 import torch
-import torch.nn.functional as F
 
 from .poolers import AveragePooling
 
@@ -24,7 +23,7 @@ class mySentenceTransformer(nn.Module):
 
         self.pooler = AveragePooling()
 
-    def forward(self, sentences: List[str]) -> List[torch.Tensor]:
+    def forward(self, sentences: List[str]):
         inputs = self.tokenizer(sentences, padding='longest', return_tensors='pt').to(self.model.device)
         output = self.model(**inputs)
         return self.pooler(output.last_hidden_state, inputs['attention_mask'])

@@ -14,7 +14,7 @@ class BaselineDialogueEncoderConfig:
     pooling: str = 'cls' # 'avg' or 'cls' or 'att'
 
 
-class BaselineDialogueEncoder(nn.Module, HParamsPuller, BaseDialogueModel):
+class BaselineDialogueEncoder(nn.Module, BaseDialogueModel):
     def __init__(self, config: BaselineDialogueEncoderConfig):
         super().__init__()
 

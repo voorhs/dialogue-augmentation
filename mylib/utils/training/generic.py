@@ -7,7 +7,7 @@ from argparse import Namespace
 class TrainerConfig:
     name: str = None
     n_workers: int = 8
-    n_epochs: int = None
+    n_epochs: int = 5
     seed: int = 0
     cuda: str = None
     # interval: int = 4000
@@ -106,8 +106,8 @@ def train(learner, train_loader, val_loader, config: TrainerConfig, args: Namesp
     logger.log_hyperparams(vars(args))
 
     trainer = pl.Trainer(
-        # max_epochs=1,
-        max_time={'hours': 24},
+        max_epochs=config.n_epochs,
+        # max_time={'hours': 24},
         
         # max_time={'minutes': 2},
         # max_steps=0,
@@ -116,8 +116,8 @@ def train(learner, train_loader, val_loader, config: TrainerConfig, args: Namesp
         accelerator='gpu',
         deterministic=False,
         precision="16-mixed",
-        devices=-1,
-        strategy='ddp',
+        # devices=-1,
+        # strategy='ddp',
 
         # fraction of data to use
         limit_train_batches=1.,

@@ -1,28 +1,30 @@
-from ...utils.training import HParamsPuller
-from ...modeling.aux import mySentenceTransformer
 import torch
 from torch import nn
 import torch.nn.functional as F
 
+from .config import PairwiseModelConfig
+from ...utils.modeling.generic import mySentenceTransformer
 
-class BaseContextEncoder(nn.Module, HParamsPuller):
-    context_size: int
-    
+
+class BaseContextEncoder(nn.Module):    
     def get_encoding_size(self):
         raise NotImplementedError()
 
 
 class ContextEncoderConcat(BaseContextEncoder):
-    def __init__(self, sentence_encoder: mySentenceTransformer, context_size, n_speakers=2, speaker_embedding_dim=8):
+    def __init__(self, sentence_encoder: mySentenceTransformer, config: PairwiseModelConfig, for_target=False):
         super().__init__()
 
+        self.for_target = for_target
+        self.config = PairwiseModelConfig
         self.sentence_encoder = sentence_encoder
-        self.context_size = context_size
-        self.speaker_embedding_dim = speaker_embedding_dim
 
-        self.speaker_embedding = nn.Embedding(n_speakers, speaker_embedding_dim)
-
-    def forward(self, batch):
+        self.speaker_embedding = nn.Embedding(
+            config.n_speakers,
+            config.speaker_embedding_dim
+        )
+    
+    def get_embeddings(self, batch):
         uts = []
         lens = []
         spe = []
@@ -33,22 +35,43 @@ class ContextEncoderConcat(BaseContextEncoder):
             lens.append(len(cur_uts))
         
         sentence_embeddings = self.sentence_encoder(uts)
+        sentence_embeddings = list(torch.unbind(sentence_embeddings, dim=0))
         speaker_embeddings = self.speaker_embedding(torch.tensor(spe, dtype=torch.int, device=sentence_embeddings[0].device))
-        d = self.sentence_encoder.get_sentence_embedding_size()
+
+        return sentence_embeddings, speaker_embeddings, lens
+
+    def forward(self, batch):
+        sentence_embeddings, speaker_embeddings, lens = self.get_embeddings(batch)
+
         res = []
         for i in range(len(batch)):
             start = sum(lens[:i])
             end = start + lens[i]
-            n_zeros_to_pad = (self.context_size - lens[i]) * d
-            enc = F.pad(torch.cat(sentence_embeddings[start:end] + [speaker_embeddings[i]]), pad=(n_zeros_to_pad, 0), value=0)
+            enc = self.pad_missing_utterances(sentence_embeddings[start:end], speaker_embeddings[i], lens[i])
             res.append(enc)
+
+        return torch.stack(res, dim=0)
+    
+    def pad_missing_utterances(self, sentences, speaker, n_actual_utterances):
+        """
+        if actual given context is smaller than defined max context length,
+        then zero out embedding entries, that correspond to missing uttarances"""
         
-        return res
+        d = self.sentence_encoder.get_sentence_embedding_size()
+        n_zeros_to_pad = (self.config.context_size - n_actual_utterances) * d
+        
+        if not self.for_target:
+            flattened = torch.cat(sentences + [speaker])
+            return F.pad(flattened, pad=(n_zeros_to_pad, 0), value=0)
+        
+        flattened = torch.cat([speaker] + sentences)
+        return F.pad(flattened, pad=(0, n_zeros_to_pad), value=0)
 
     def get_encoding_size(self):
-        return self.sentence_encoder.get_sentence_embedding_size() * self.context_size + self.speaker_embedding_dim
+        return self.sentence_encoder.get_sentence_embedding_size() * self.config.context_size + self.config.speaker_embedding_dim
 
 
+# deprecated and not supported
 class ContextEncoderEMA(BaseContextEncoder):
     def __init__(self, sentence_encoder: mySentenceTransformer, context_size, tau):
         super().__init__()
@@ -93,6 +116,7 @@ class ContextEncoderEMA(BaseContextEncoder):
         return 2 * self.sentence_encoder.get_sentence_embedding_size()
 
 
+# deprecated and not supported
 class ContextEncoderDM(BaseContextEncoder):
     def __init__(self, dialogue_model, tau):
         super().__init__()
@@ -113,4 +137,3 @@ class ContextEncoderDM(BaseContextEncoder):
 
     def get_encoding_size(self):
         return 2 * self.dialogue_model.model.config.hidden_size
-

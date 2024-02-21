@@ -21,6 +21,9 @@ if __name__ == "__main__":
     from mylib.datasets import ContrastiveDataset, MultiWOZServiceClfDataset
     contrastive_train = ContrastiveDataset(args.contrastive_path)
     
+    learner_config.total_steps = len(contrastive_train) * trainer_config.n_epochs // learner_config.batch_size
+    print('total steps:', learner_config.total_steps)
+    
     multiwoz_train = MultiWOZServiceClfDataset(
         path=args.multiwoz_path,
         split='train'

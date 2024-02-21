@@ -1,7 +1,5 @@
 from dataclasses import dataclass
 
-from torch.optim import AdamW
-from torch.optim.lr_scheduler import LambdaLR
 import torch.nn as nn
 import torch
 import torch.nn.functional as F
@@ -10,6 +8,8 @@ from torchmetrics.functional.classification import multilabel_f1_score
 import numpy as np
 
 from .generic import BaseLearnerConfig, BaseLearner
+from .loss import contrastive_loss
+from .accuracy import all_accuracies
 from ..embedding_benchmarks import all_embedding_metrics
 
 
@@ -137,68 +137,3 @@ class DialogueEncoderLearner(BaseLearner):
         self.multiwoz_train.clear()
         self.multiwoz_validation.clear()
 
-    def configure_optimizers(self):
-        optim_groups = self.get_parameter_groups()
-        optimizer = AdamW(optim_groups, lr=self.config.lr, betas=self.config.betas)
-        def lr_foo(step):
-            warmup_steps = self.config.warmup_period
-            periodic = self.config.do_periodic_warmup
-            
-            if warmup_steps is None:
-                return 1
-            if periodic:
-                return (step % warmup_steps + 1) / warmup_steps
-            else:
-                return (step + 1) / warmup_steps if step < warmup_steps else 1
-
-        scheduler = LambdaLR(
-            optimizer,
-            lr_lambda=lr_foo
-        )
-        return {"optimizer": optimizer, "lr_scheduler": {"scheduler": scheduler, "interval": "step", 'frequency': 1}}
-
-
-def contrastive_loss(scores, name):
-    if name == 'contrastive_symmetric':
-        fn = contrastive_symmetric
-    if name == 'contrastive_cross':
-        fn = contrastive_cross
-    if name == 'contrastive_bce':
-        fn = contrastive_bce
-    
-    return fn(scores)
-
-
-def contrastive_symmetric(scores):
-    batch_size = scores.shape[0]
-    targets = torch.eye(batch_size, device=scores.device)
-    loss_1 = F.cross_entropy(scores, targets, reduction='mean')
-    loss_2 = F.cross_entropy(scores.T, targets, reduction='mean')
-    loss = loss_1 + loss_2
-    return loss
-
-
-def contrastive_cross(scores):
-    scores = scores.exp()
-    pos_scores = scores.diag()
-    neg_scores1 = scores.sum(dim=0)
-    neg_scores2 = scores.sum(dim=1)
-    loss = (pos_scores / (neg_scores1 + neg_scores2 - pos_scores)).log().neg().sum()
-    return loss
-
-
-def contrastive_bce(scores):
-    batch_size = scores.shape[0]
-    targets = torch.eye(batch_size, device=scores.device)
-    loss = F.binary_cross_entropy_with_logits(scores, targets, reduction='mean')
-    return loss
-
-
-def all_accuracies(scores):
-    res = {}
-    for k in [1, 3, 5, 10, 20]:
-        if scores.shape[0] <= k:
-            continue
-        topk_indicators = [i in top for i, top in enumerate(torch.topk(scores, k=k, dim=1).indices)]
-        res[f'train_accuracy@{k}'] = np.mean(topk_indicators)
-    return res

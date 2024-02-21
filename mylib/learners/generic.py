@@ -1,29 +1,30 @@
-import lightning.pytorch as pl
+import math
 from dataclasses import dataclass, asdict
-from typing import Tuple
+import lightning.pytorch as pl
 from torch import nn
+from torch.optim import AdamW
+from torch.optim.lr_scheduler import LambdaLR
 
 
 @dataclass
 class BaseLearnerConfig:
-    lr: float = 3e-6
-    batch_size: int = 32
-    warmup_period: int = None
-    do_periodic_warmup: bool = False
-    weight_decay: float = 1e-2
-    betas: Tuple[float, float] = (0.9, 0.999)
+    max_lr: float = 3e-6
+    lr_div_factor: float = 10
+    batch_size: int = 16
+    warmup_pct: float = 0.
+    weight_decay = 1e-2
+    betas : tuple = (0.9, 0.999)
+    total_steps: int = None
+    lr_decay: bool = False
 
 
 #! fix `get_parameter_group()`
 class BaseLearner(pl.LightningModule):
+    # config: BaseLearnerConfig
+
     @staticmethod
     def get_default_config():
         raise NotImplementedError()
-    
-    def on_train_start(self):
-        model_hparams = self.model.get_hparams()
-        model_hparams.update(asdict(self.config))
-        self.logger.log_hyperparams(model_hparams)
 
     def get_parameter_groups(self):
         """Taken from https://github.com/karpathy/minGPT/blob/3ed14b2cec0dfdad3f4b2831f2b4a86d11aef150/mingpt/model.py#L136"""
@@ -58,3 +59,26 @@ class BaseLearner(pl.LightningModule):
         ]
         
         return optim_groups
+
+    def configure_optimizers(self):
+        optimizer = AdamW(self.get_parameter_groups(), amsgrad=True, betas=self.config.betas)
+
+        def one_cycle_lr(step):
+            warmup_pct = self.config.warmup_pct
+            total_steps = self.config.total_steps
+            warmup_steps = math.floor(warmup_pct * total_steps)
+            
+            if step < warmup_steps:
+                return 1 - 0.5 * (1 - 1 / self.config.lr_div_factor) * (1 + math.cos(step / warmup_steps * math.pi))
+            
+            if self.config.lr_decay:
+                return 1 / self.config.lr_div_factor + 0.5 * (1 - 1 / self.config.lr_div_factor) * (1 + math.cos((step - warmup_steps)/ (total_steps - warmup_steps) * math.pi))
+
+            return 1
+        
+        scheduler = LambdaLR(
+            optimizer,
+            lr_lambda=one_cycle_lr
+        )
+
+        return {"optimizer": optimizer, "lr_scheduler": {"scheduler": scheduler, "interval": "step", 'frequency': 1}}
