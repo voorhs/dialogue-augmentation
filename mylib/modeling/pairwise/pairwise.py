@@ -56,13 +56,4 @@ class Pairwise(nn.Module, LightningCkptLoadable):
     #     batch = self.make_batch_from_dia(dialogue)
     #     logits = self.get_logits(batch, temperature)
     #     return F.softmax(logits, dim=1).diag().log10().mean().cpu().item()
-    
-    @staticmethod
-    def make_batch_from_dia(dialogue):
-        batch = []
-        for i in range(1, len(dialogue)):
-            batch.append({
-                'context': dialogue[:i],
-                'target': dialogue[i]
-            })
-        return batch
+

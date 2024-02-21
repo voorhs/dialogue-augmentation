@@ -50,9 +50,9 @@ class PairwiseLearner(BaseLearner):
         
         metric = {}
         for key, val in metric_.items():
-            metric[f'train_{key}'] = val
+            metric[f'val_{key}'] = val
 
-        metric['train_loss'] = loss        
+        metric['val_loss'] = loss        
 
         self.log_dict(
             dictionary=metric,
