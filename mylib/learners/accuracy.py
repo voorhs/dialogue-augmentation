@@ -8,5 +8,5 @@ def all_accuracies(scores):
         if scores.shape[0] <= k:
             continue
         topk_indicators = [i in top for i, top in enumerate(torch.topk(scores, k=k, dim=1).indices)]
-        res[f'train_accuracy@{k}'] = np.mean(topk_indicators)
+        res[f'accuracy@{k}'] = np.mean(topk_indicators)
     return res

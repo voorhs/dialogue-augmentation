@@ -27,9 +27,14 @@ class PairwiseLearner(BaseLearner):
         return loss, metric
 
     def training_step(self, batch, batch_idx):
-        loss, metric = self.forward(batch)
-        metric['train_loss']= loss
-        
+        loss, metric_ = self.forward(batch)
+
+        metric = {}
+        for key, val in metric_.items():
+            metric[f'train_{key}'] = val
+
+        metric['train_loss'] = loss        
+  
         self.log_dict(
             dictionary=metric,
             prog_bar=False,
@@ -41,11 +46,13 @@ class PairwiseLearner(BaseLearner):
         return loss
     
     def validation_step(self, batch, batch_idx):
-        loss, metric = self.forward(batch)
-        metric['val_loss']= loss
+        loss, metric_ = self.forward(batch)
+        
+        metric = {}
+        for key, val in metric_.items():
+            metric[f'train_{key}'] = val
 
-        for key, val in metric.items():
-            metric[key.replace('train', 'val')] = val
+        metric['train_loss'] = loss        
 
         self.log_dict(
             dictionary=metric,

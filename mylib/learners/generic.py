@@ -1,5 +1,5 @@
 import math
-from dataclasses import dataclass, asdict
+from dataclasses import dataclass
 import lightning.pytorch as pl
 from torch import nn
 from torch.optim import AdamW
@@ -61,7 +61,7 @@ class BaseLearner(pl.LightningModule):
         return optim_groups
 
     def configure_optimizers(self):
-        optimizer = AdamW(self.get_parameter_groups(), amsgrad=True, betas=self.config.betas)
+        optimizer = AdamW(self.get_parameter_groups(), amsgrad=True, lr=self.config.max_lr, betas=self.config.betas)
 
         def one_cycle_lr(step):
             warmup_pct = self.config.warmup_pct

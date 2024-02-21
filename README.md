@@ -191,17 +191,12 @@ curl https://pyenv.run | bash
 
 Train dialogue encoder (multi domain benchmark as validation)
 ```bash
-python3 train_dialogue_encoder.py --hf-model google-bert/bert-base-uncased --contrastive-path data/filtered-by-length/ --multiwoz-path data/multiwoz-filtered/ --cuda "0" --logger tb --mode max --pooling cls --metric-for-checkpoint logreg_accuracy --batch-size 64 --finetune-layers 6
-```
-
-Train dialogue encoder (one domain benchmark as validation)
-```bash
-python3 train_dialogue_encoder.py --hf-model google-bert/bert-base-uncased --contrastive-path data/filtered-by-length/ --multiwoz-path data/multiwoz-1-domain-bert-base-uncased/ --cuda "0" --logger tb --mode max --pooling cls --metric-for-checkpoint logreg_accuracy --batch-size 64 --finetune-layers 6
+python3 train_dialogue_encoder.py --hf-model google-bert/bert-base-uncased --contrastive-path data/filtered-by-length/ --multiwoz-path data/multiwoz-filtered/ --cuda "0" --logger tb --mode max --pooling cls --metric-for-checkpoint logreg_accuracy --batch-size 128 --finetune-layers 3
 ```
 
 Train pairwise model
 ```bash
-python3 train_pairwise.py --cuda 0 --logger tb --mode max --metric-for-checkpoint val_loss --batch-size 96 --finetune-layers 3
+python3 train_pairwise.py --cuda 0 --logger tb --mode max --metric-for-checkpoint val_loss --batch-size 256 --finetune-layers 3
 ```
 
 ### Algorithm
