@@ -16,43 +16,36 @@ class ContextEncoderConcat(BaseContextEncoder):
         super().__init__()
 
         self.for_target = for_target
-        self.config = PairwiseModelConfig
+        self.config = config
         self.sentence_encoder = sentence_encoder
-
-        self.speaker_embedding = nn.Embedding(
-            config.n_speakers,
-            config.speaker_embedding_dim
-        )
     
     def get_embeddings(self, batch):
         uts = []
         lens = []
-        spe = []
         for dia in batch:
-            cur_uts = [item['utterance'] for item in dia]
-            spe.append(dia[-1]['speaker'])
+            i = 0 if self.for_target else -1
+            cur_uts = [f"{dia[i]['speaker']} {item['utterance']}" for item in dia]
             uts.extend(cur_uts)
             lens.append(len(cur_uts))
         
         sentence_embeddings = self.sentence_encoder(uts)
         sentence_embeddings = list(torch.unbind(sentence_embeddings, dim=0))
-        speaker_embeddings = self.speaker_embedding(torch.tensor(spe, dtype=torch.int, device=sentence_embeddings[0].device))
 
-        return sentence_embeddings, speaker_embeddings, lens
+        return sentence_embeddings, lens
 
     def forward(self, batch):
-        sentence_embeddings, speaker_embeddings, lens = self.get_embeddings(batch)
+        sentence_embeddings, lens = self.get_embeddings(batch)
 
         res = []
         for i in range(len(batch)):
             start = sum(lens[:i])
             end = start + lens[i]
-            enc = self.pad_missing_utterances(sentence_embeddings[start:end], speaker_embeddings[i], lens[i])
+            enc = self.pad_missing_utterances(sentence_embeddings[start:end], lens[i])
             res.append(enc)
 
         return torch.stack(res, dim=0)
     
-    def pad_missing_utterances(self, sentences, speaker, n_actual_utterances):
+    def pad_missing_utterances(self, sentences, n_actual_utterances):
         """
         if actual given context is smaller than defined max context length,
         then zero out embedding entries, that correspond to missing uttarances"""
@@ -60,15 +53,11 @@ class ContextEncoderConcat(BaseContextEncoder):
         d = self.sentence_encoder.get_sentence_embedding_size()
         n_zeros_to_pad = (self.config.context_size - n_actual_utterances) * d
         
-        if not self.for_target:
-            flattened = torch.cat(sentences + [speaker])
-            return F.pad(flattened, pad=(n_zeros_to_pad, 0), value=0)
-        
-        flattened = torch.cat([speaker] + sentences)
+        flattened = torch.cat(sentences)
         return F.pad(flattened, pad=(0, n_zeros_to_pad), value=0)
 
     def get_encoding_size(self):
-        return self.sentence_encoder.get_sentence_embedding_size() * self.config.context_size + self.config.speaker_embedding_dim
+        return self.sentence_encoder.get_sentence_embedding_size() * self.config.context_size
 
 
 # deprecated and not supported

@@ -62,7 +62,7 @@ class HParamsPuller:
         return res
 
 
-def train(learner, train_loader, val_loader, config: TrainerConfig, args: Namespace):
+def train(learner, train_loader, val_loader, config: TrainerConfig, args: Namespace, project_name):
     from lightning.pytorch.callbacks import ModelCheckpoint, LearningRateMonitor
     import os
     
@@ -97,7 +97,7 @@ def train(learner, train_loader, val_loader, config: TrainerConfig, args: Namesp
             api_key=secrets['comet_api'],
             workspace=secrets["workspace"],
             save_dir=os.path.join('.', 'logs', 'comet'),
-            project_name=secrets["project_name"],
+            project_name=project_name,
             experiment_name=config.name,
         )
     else:

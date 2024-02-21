@@ -77,4 +77,4 @@ if __name__ == "__main__":
 
     from mylib.utils.training import train
 
-    train(learner, train_loader, val_loader, trainer_config, args)
+    train(learner, train_loader, val_loader, trainer_config, args, project_name='pairwise-model')

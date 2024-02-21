@@ -1,3 +1,4 @@
+import torch
 import torch.nn as nn
 
 from ...utils.training import LightningCkptLoadable
@@ -23,12 +24,12 @@ class Pairwise(nn.Module, LightningCkptLoadable):
         
         self.context_projector = Projector(
             input_size=self.context_encoder.get_encoding_size(),
-            output_size=self.config.projection_size,
+            output_size=config.projection_size,
             dropout=config.projector_dropout
         )
         self.target_projector = Projector(
             input_size=self.target_encoder.get_encoding_size(),
-            output_size=self.config.projection_size,
+            output_size=config.projection_size,
             dropout=config.projector_dropout
         )
 
@@ -50,10 +51,3 @@ class Pairwise(nn.Module, LightningCkptLoadable):
         target_encodings = self.target_projector(target_encodings)
 
         return context_encodings, target_encodings
-
-    # @torch.no_grad()
-    # def score(self, dialogue, temperature=1):
-    #     batch = self.make_batch_from_dia(dialogue)
-    #     logits = self.get_logits(batch, temperature)
-    #     return F.softmax(logits, dim=1).diag().log10().mean().cpu().item()
-

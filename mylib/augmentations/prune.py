@@ -30,7 +30,7 @@ def _load_pairwise_cat(ckpt_path, device):
 class Pruner:
     def __init__(
             self,
-            ckpt_path='./logs/comet/dialogue-encoder/7a5dd2169d3b49d696a67ba06af43f0e/checkpoints/last.ckpt',
+            ckpt_path='./logs/comet/pairwise-model/7a5dd2169d3b49d696a67ba06af43f0e/checkpoints/last.ckpt',
             device='cuda',
         ):
         self.model = _load_pairwise_cat(ckpt_path, device)
@@ -63,26 +63,25 @@ class Pruner:
         #     score = model.score(aug)
         #     variations.append((aug, score))
         # res, score = max(variations, key=lambda x: x[1])
+        
         return aug
 
 
 @torch.no_grad()
 def _cluster(model: Pairwise, dia, n_clusters):
     """clusters utterances within dia according to similarities from pairwise model"""
-    batch = make_batch_from_dia(dia)
-    context_encodings, target_encodings = model(batch)
-    cosine_similarities = context_encodings @ target_encodings.T
+    cosine_similarities = get_similarities(model, dia)
     
     # add last row because last target never was used as context
     # add first column because first context never was used as target
     cosine_similarities = F.pad(cosine_similarities, pad=(1, 0, 0, 1))
-    distance_matrix = 1 / cosine_similarities
+    distance_matrix = 1 / (cosine_similarities + 1e-5)
 
     labels = AgglomerativeClustering(
         n_clusters=n_clusters,
         linkage='average',
         metric='precomputed'
-    ).fit_predict(distance_matrix)
+    ).fit_predict(distance_matrix.cpu().numpy())
 
     res = [[] for _ in range(len(np.unique(labels)))]
     for i_ut, lab in enumerate(labels):
@@ -98,3 +97,9 @@ def make_batch_from_dia(dialogue):
             'target': dialogue[i]
         })
     return batch
+
+
+def get_similarities(model, dia):
+    batch = make_batch_from_dia(dia)
+    context_encodings, target_encodings = model(batch)
+    return context_encodings @ target_encodings.T

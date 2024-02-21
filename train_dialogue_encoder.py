@@ -89,5 +89,6 @@ if __name__ == "__main__":
         contrastive_train_loader,
         [multiwoz_train_loader, multiwoz_val_loader],
         trainer_config,
-        args
+        args,
+        project_name='dialogue-encoder'
     )

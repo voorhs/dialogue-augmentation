@@ -1,14 +1,17 @@
-import numpy as np
-import torch
-from tqdm import tqdm
 import random
-from .prune import _load_pairwise_cat, _cluster, Pairwise
+
+import torch
+import torch.nn.functional as F
+import numpy as np
+from tqdm import tqdm
+
+from .prune import _load_pairwise_cat, _cluster, Pairwise, get_similarities
 
 
 class Shuffler:
     def __init__(
             self,
-            ckpt_path='./logs/tensorboard/pairwise-listwise/pairwise-cat-speaker-issue/checkpoints/last.ckpt',
+            ckpt_path='./logs/comet/pairwise-model/7a5dd2169d3b49d696a67ba06af43f0e/checkpoints/last.ckpt',
             device='cpu',
             thresh=-np.inf
         ):
@@ -27,8 +30,10 @@ class Shuffler:
     def _shuffle(model: Pairwise, dia):
         if len(dia) < 12:
             return None, -np.inf
+
         end = len(dia) // 3
         start = 4
+
         variations = []
         for n_clusters in range(start, end+1):
             clusterwise_uts = _cluster(model, dia, n_clusters)
@@ -37,7 +42,14 @@ class Shuffler:
                 aug = []
                 for ut_ids in clusterwise_uts:
                     aug.extend([dia[i] for i in ut_ids])
-                score = model.score(aug)
+                score = score(model, aug)
                 variations.append((aug, score))
-        res, score = max(variations, key=lambda x: x[1])
-        return res, score
+        
+        return max(variations, key=lambda x: x[1])
+        
+
+
+@torch.no_grad()
+def score(model, dia):
+    logits = get_similarities(model, dia)
+    return F.softmax(logits, dim=1).diag().log10().mean().cpu().item()
