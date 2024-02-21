@@ -30,7 +30,7 @@ def _load_pairwise_cat(ckpt_path, device):
 class Pruner:
     def __init__(
             self,
-            ckpt_path='./logs/comet/pairwise-model/7a5dd2169d3b49d696a67ba06af43f0e/checkpoints/last.ckpt',
+            ckpt_path='./logs/comet/pairwise-model/84e24444441141819e9934acbf055f5f/checkpoints/last.ckpt',
             device='cuda',
         ):
         self.model = _load_pairwise_cat(ckpt_path, device)

@@ -11,7 +11,7 @@ from .prune import _load_pairwise_cat, _cluster, Pairwise, get_similarities
 class Shuffler:
     def __init__(
             self,
-            ckpt_path='./logs/comet/pairwise-model/7a5dd2169d3b49d696a67ba06af43f0e/checkpoints/last.ckpt',
+            ckpt_path='./logs/comet/pairwise-model/84e24444441141819e9934acbf055f5f/checkpoints/last.ckpt',
             device='cpu',
             thresh=-np.inf
         ):
@@ -42,7 +42,7 @@ class Shuffler:
                 aug = []
                 for ut_ids in clusterwise_uts:
                     aug.extend([dia[i] for i in ut_ids])
-                score = score(model, aug)
+                score = get_score(model, aug)
                 variations.append((aug, score))
         
         return max(variations, key=lambda x: x[1])
@@ -50,6 +50,6 @@ class Shuffler:
 
 
 @torch.no_grad()
-def score(model, dia):
+def get_score(model, dia):
     logits = get_similarities(model, dia)
     return F.softmax(logits, dim=1).diag().log10().mean().cpu().item()
