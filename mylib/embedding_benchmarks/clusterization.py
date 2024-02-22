@@ -14,15 +14,23 @@ def all_clusterization_metrics(X_train, Y_train, X_val, Y_val):
     Y_train: targets (N, k) with zeros and ones
     """
 
+    X_train = X_train.numpy()
+    X_val = X_val.numpy()
+    
     n_classes = Y_val.shape[1]
     kmeans = KMeans(n_classes, random_state=0, n_init=10)
-    pred = kmeans.fit(X_train.numpy()).predict(X_val.numpy())
-    pred = torch.from_numpy(pred)
+    
+    pred = torch.from_numpy(kmeans.fit(X_train).predict(X_val))
     true = torch.argmax(Y_val, dim=1)
+
+    pred_train = torch.from_numpy(kmeans.predict(X_train))
+    true_train = torch.argmax(Y_train, dim=1)
     
     return {
-        'cluster_purity': purity(true, pred, n_classes),
-        'cluster_v_measure': vmeasure(true, pred, n_classes)
+        'cluster_purity_val': purity(true, pred, n_classes),
+        'cluster_v_measure_val': vmeasure(true, pred, n_classes),
+        'cluster_purity_train': purity(true_train, pred_train, n_classes),
+        'cluster_v_measure_train': vmeasure(true_train, pred_train, n_classes)
     }
 
 def purity(true, pred, n_classes):

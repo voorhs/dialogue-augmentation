@@ -31,6 +31,10 @@ class DialogueEncoderLearner(BaseLearner):
         # list of (embedding, target) pairs for multiwoz service clf (as validation)
         self.multiwoz_train = []
         self.multiwoz_validation = []
+        self.bitod_train = []
+        self.bitod_validation = []
+        self.sgd_train = []
+        self.sgd_validation = []
 
         if self.config.loss == 'multiwoz_service_clf':
             self.clf_head = nn.Linear(self.model.get_hidden_size(), 7)
@@ -82,18 +86,14 @@ class DialogueEncoderLearner(BaseLearner):
 
     def training_step(self, batch, batch_idx):
         loss, metrics = self.forward(batch)
-        self.log(
-            name='train_loss',
-            value=loss,
-            prog_bar=False,
-            logger=True,
-            on_step=True,
-            on_epoch=True,
-            batch_size=self.config.batch_size,
-            sync_dist=True
-        )
+        
+        metrics['loss'] = loss
+        metrics_prefix = {}
+        for k, v in metrics.items():
+            metrics_prefix[f'train/{k}'] = v
+
         self.log_dict(
-            dictionary=metrics,
+            dictionary=metrics_prefix,
             prog_bar=False,
             logger=True,
             on_step=True,
@@ -113,20 +113,37 @@ class DialogueEncoderLearner(BaseLearner):
             self.multiwoz_train.extend(res)
         elif dataloader_idx == 1:
             self.multiwoz_validation.extend(res)
+
+        elif dataloader_idx == 2:
+            self.bitod_train.extend(res)
+        elif dataloader_idx == 3:
+            self.bitod_validation.extend(res)
+            
+        elif dataloader_idx == 4:
+            self.sgd_train.extend(res)
+        elif dataloader_idx == 5:
+            self.sgd_validation.extend(res)
     
     def on_validation_epoch_end(self) -> None:
         
-        metrics = all_embedding_metrics(self.multiwoz_train, self.multiwoz_validation)
+        multiwoz_metrics = all_embedding_metrics(self.multiwoz_train, self.multiwoz_validation)
+        bitod_metrics = all_embedding_metrics(self.bitod_train, self.bitod_validation)
+        sgd_metrics = all_embedding_metrics(self.sgd_train, self.sgd_validation)
 
         # https://github.com/Lightning-AI/pytorch-lightning/issues/18803
-        for key, val in metrics.items():
-            if not isinstance(val, torch.Tensor):
-                metrics[key] = torch.tensor(val, device=self.device)
-            else:
-                metrics[key] = val.to(self.device)
+        res = {}
+        for metrics, dataset_name in zip(
+            [multiwoz_metrics, bitod_metrics, sgd_metrics],
+            ['multiwoz', 'bitod', 'sgd']
+        ):
+            for key, val in metrics.items():
+                if not isinstance(val, torch.Tensor):
+                    res[f'{dataset_name}/{key}'] = torch.tensor(val, device=self.device)
+                else:
+                    res[f'{dataset_name}/{key}'] = val.to(self.device)
 
         self.log_dict(
-            dictionary=metrics,
+            dictionary=res,
             prog_bar=False,
             logger=True,
             on_step=False,
@@ -137,3 +154,8 @@ class DialogueEncoderLearner(BaseLearner):
         self.multiwoz_train.clear()
         self.multiwoz_validation.clear()
 
+        self.bitod_train.clear()
+        self.bitod_validation.clear()
+
+        self.sgd_train.clear()
+        self.sgd_validation.clear()

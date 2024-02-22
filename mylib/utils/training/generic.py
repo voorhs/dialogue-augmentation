@@ -156,6 +156,67 @@ def train(learner, train_loader, val_loader, config: TrainerConfig, args: Namesp
     # trainer.validate(learner, val_loader, ckpt_path='best')
 
 
+def validate(learner, val_loader, config: TrainerConfig, args: Namespace, project_name):
+    from lightning.pytorch.callbacks import LearningRateMonitor
+    import os
+    
+    lr_monitor = LearningRateMonitor(logging_interval='step')
+    callbacks = [lr_monitor]
+
+    if config.logger == 'comet':
+        import comet_ml
+    import lightning.pytorch as pl
+    from lightning.pytorch.loggers import TensorBoardLogger, WandbLogger, CometLogger
+    import json
+
+    if config.logger == 'tb':
+        logger = TensorBoardLogger(
+            save_dir=os.path.join('.', 'logs', 'tensorboard'),
+            name=config.name
+        )
+    elif config.logger == 'wb':
+        logger = WandbLogger(
+            save_dir=os.path.join('.', 'logs', 'wandb'),
+            name=config.name
+        )
+    elif config.logger == 'comet':
+        secrets = json.load(open('secrets.json', 'r'))
+        logger = CometLogger(
+            api_key=secrets['comet_api'],
+            workspace=secrets["workspace"],
+            save_dir=os.path.join('.', 'logs', 'comet'),
+            project_name=project_name,
+            experiment_name=config.name,
+        )
+    else:
+        raise ValueError('unknown logger name')
+
+    logger.log_hyperparams(vars(args))
+
+    trainer = pl.Trainer(
+        # hardware settings
+        accelerator='gpu',
+        deterministic=False,
+        precision="16-mixed",
+        # devices=-1,
+        # strategy='ddp',
+
+        # fraction of data to use
+        limit_val_batches=1.,
+
+        # logging and checkpointing
+        logger=logger,
+        enable_progress_bar=False,
+        profiler=None,
+        callbacks=callbacks,
+    )
+
+    if config.init_from is None:
+        raise ValueError('provide path to checkpoint via `--init-from PATH` argument')
+
+    trainer.validate(learner, val_loader, ckpt_path=config.init_from)
+
+
 def init_environment(args):
     import torch
     torch.set_float32_matmul_precision('medium')

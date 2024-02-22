@@ -94,7 +94,7 @@ class Counter:
 
 
 def get_record_generator(name, tokenizer, bound, counter: Counter):
-    dataset = load_dataset('Salesforce/dialogstudio', name)['train']['log']
+    dataset = load_dataset('Salesforce/dialogstudio', name, split='train', trust_remote_code=True)['log']
     for i, raw_dia in tqdm(enumerate(dataset), desc=f'parsing {name}'):
         dia = preprocess_dialogue(raw_dia, tokenizer, bound)
         if dia is None:

@@ -1,6 +1,6 @@
 import os
 from transformers import AutoTokenizer
-from datasets import load_from_disk
+from datasets import load_from_disk, disable_caching
 from ..modeling.dialogue import BaselineDialogueEncoder
 
 
@@ -17,7 +17,7 @@ def the_same_for_multiwoz(row, tokenizer, upper_bound):
     return input_ids.shape[1] <= upper_bound
 
 
-def main(path_in, path_out, tokenizer, upper_bound=512):
+def main(path_in, path_out, tokenizer, num_shards, upper_bound):
     """Copies all json chunks of a dataset from `path_in` to `path_out`.
     Each dia which is `None` or exceeding the length limit is
     replaced with `None` or dropped according to `mode`.
@@ -25,6 +25,7 @@ def main(path_in, path_out, tokenizer, upper_bound=512):
     About length limit: each dia should be shorter than 512
     minus number of SEP and CLS tokens (see `BaselineDialogueEncoder`)."""
 
+    disable_caching()
     tokenizer = AutoTokenizer.from_pretrained(tokenizer)
  
     if not os.path.exists(path_out):
@@ -44,4 +45,4 @@ def main(path_in, path_out, tokenizer, upper_bound=512):
         )
     )
     
-    out_dataset.save_to_disk(path_out, num_shards=64)
+    out_dataset.save_to_disk(path_out, num_shards=num_shards)
