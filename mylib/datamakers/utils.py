@@ -1,28 +1,31 @@
-import os, json, yaml
-from argparse import Namespace
-from datetime import datetime
+import os, json
 
 from datasets import Dataset
 import pyarrow.parquet as pq
 
 
-def dia_generator(path_in):
+def dia_generator(path_in, as_string=True):
     json_chunks_in = sorted([filename for filename in os.listdir(path_in) if filename.endswith('.json')])
 
     for chunk_name in json_chunks_in:
         chunk_path = os.path.join(path_in, chunk_name)
         chunk = json.load(open(chunk_path, 'r'))
         for dia in chunk:
-            dia['content'] = json.dumps(dia['content'])
+            content = dia['content']
+            if content[0] is None:
+                # some of augmentations were impossible, so `[None, -inf]` is stored
+                continue
+            if as_string:
+                dia['content'] = json.dumps(dia['content'])
             yield dia
 
 
-def collect_chunks(path_in, path_out):
+def collect_chunks(path_in, path_out, as_string=True):
     """collect json chunks from `path_in` into hf datasets.Dataset and save to disk to `path_out`"""
 
     dataset = Dataset.from_generator(
         dia_generator,
-        gen_kwargs={'path_in': path_in},
+        gen_kwargs={'path_in': path_in, 'as_string': as_string},
         cache_dir=False
     )
     dataset.save_to_disk(path_out)
