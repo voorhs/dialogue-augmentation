@@ -189,9 +189,21 @@ sudo apt install \
 curl https://pyenv.run | bash
 ```
 
-Train dialogue encoder (multi domain benchmark as validation)
+Train dialogue encoder (domain benchmark as validation)
 ```bash
-python3 train_dialogue_encoder.py --hf-model google-bert/bert-base-uncased --contrastive-path data/filtered-by-length/ --multiwoz-path data/multiwoz-filtered/ --cuda "0" --logger tb --mode max --pooling cls --metric-for-checkpoint logreg_accuracy --batch-size 128 --finetune-layers 3
+python3 train_baseline_dialogue_encoder.py \
+--hf-model google-bert/bert-base-uncased \
+--contrastive-path data/train-bert-base-uncased/bipr/ \
+--multiwoz-path data/benchmarks-bert-base-uncased/multiwoz \
+--bitod-path data/benchmarks-bert-base-uncased/bitod \
+--sgd-path data/benchmarks-bert-base-uncased/sgd \
+--cuda "0" \
+--logger tb \
+--mode max \
+--pooling cls \
+--metric-for-checkpoint multiwoz/logreg_accuracy \
+--batch-size 32 \
+--finetune-layers 1
 ```
 
 Train pairwise model

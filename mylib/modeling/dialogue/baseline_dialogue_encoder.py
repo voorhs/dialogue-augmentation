@@ -3,7 +3,6 @@ from dataclasses import dataclass
 from torch import nn
 from transformers import AutoModel, AutoTokenizer
 
-from ...utils.training import HParamsPuller
 from ...utils.modeling import CLSPooling, AveragePooling, SelfAttentionPooling
 from .base_dialogue_model import BaseDialogueModel
 
