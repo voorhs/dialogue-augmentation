@@ -12,8 +12,8 @@ def dia_generator(path_in, as_string=True):
         chunk = json.load(open(chunk_path, 'r'))
         for dia in chunk:
             content = dia['content']
-            if content[0] is None:
-                # some of augmentations were impossible, so `[None, -inf]` is stored
+            if content is None or content[0] is None:
+                # some of augmentations were impossible, so `None` or `[None, -inf]` is stored
                 continue
             if as_string:
                 dia['content'] = json.dumps(dia['content'])
