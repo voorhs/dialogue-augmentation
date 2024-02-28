@@ -3,3 +3,4 @@ from .domain_dataset import DomainDataset
 from .source_dataset import DialogueDataset
 from .pairs_dataset import ContextResponseDataset
 from .source_dataset import DialogueDataset
+from .halves_dataset import HalvesDataset

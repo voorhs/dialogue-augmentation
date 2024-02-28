@@ -1,13 +1,17 @@
 from argparse import Namespace
 from torch.utils.data import DataLoader
-from ...datasets import ContrastiveDataset, DomainDataset
+from ...datasets import ContrastiveDataset, DomainDataset, HalvesDataset
 from ...learners import DialogueEncoderLearnerConfig
 from ...utils.training import TrainerConfig
 
 
 def get_loaders(args: Namespace, learner_config: DialogueEncoderLearnerConfig, trainer_config: TrainerConfig):
     
-    contrastive_train = ContrastiveDataset(args.contrastive_path)
+    if args.halves:
+        contrastive_train = HalvesDataset(args.contrastive_path)
+    else:
+        contrastive_train = ContrastiveDataset(args.contrastive_path)
+    
     
     learner_config.total_steps = len(contrastive_train) * trainer_config.n_epochs // learner_config.batch_size
     # print('total steps:', learner_config.total_steps)

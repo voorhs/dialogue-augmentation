@@ -9,6 +9,7 @@ def get_configs(ModelConfig):
     ap.add_argument('--bitod-path', dest='bitod_path', required=True)
     ap.add_argument('--sgd-path', dest='sgd_path', required=True)
     ap.add_argument('--validate', dest='validate', action='store_true')
+    ap.add_argument('--halves', dest='halves', action='store_true')
     args = ap.parse_args()
 
     model_config = retrieve_fields(args, ModelConfig)
