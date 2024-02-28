@@ -1,5 +1,5 @@
-from ..utils.training import config_to_argparser, retrieve_fields, TrainerConfig
-from ..learners import DialogueEncoderLearnerConfig as LearnerConfig
+from ...utils.training import config_to_argparser, retrieve_fields, TrainerConfig, init_environment
+from ...learners import DialogueEncoderLearnerConfig as LearnerConfig
 
 
 def get_configs(ModelConfig):
@@ -15,7 +15,6 @@ def get_configs(ModelConfig):
     learner_config = retrieve_fields(args, LearnerConfig)
     trainer_config = retrieve_fields(args, TrainerConfig)
 
-    from mylib.utils.training import init_environment
     init_environment(args)
 
     return args, model_config, learner_config, trainer_config

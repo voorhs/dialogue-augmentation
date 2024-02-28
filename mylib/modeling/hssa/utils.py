@@ -1,7 +1,7 @@
-from .modeling_hssa import SegmentPooler
+from .modeling_hssa import SegmentPooler, HSSAModel
 
 
-def freeze_hssa(model, finetune_layers=0):
+def freeze_hssa(model: HSSAModel, finetune_layers=0):
     model.embeddings.requires_grad_(False)
     model.embeddings.word_embeddings.weight[-2:].requires_grad_(True)
 

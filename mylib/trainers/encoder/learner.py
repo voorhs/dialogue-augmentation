@@ -1,5 +1,5 @@
-from ..learners import DialogueEncoderLearner, DialogueEncoderLearnerConfig
-from ..utils.training import TrainerConfig
+from ...learners import DialogueEncoderLearner, DialogueEncoderLearnerConfig
+from ...utils.training import TrainerConfig
 
 
 def get_learner(model, learner_config: DialogueEncoderLearnerConfig, trainer_config: TrainerConfig):

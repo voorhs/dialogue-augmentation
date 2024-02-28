@@ -1,7 +1,9 @@
 from dataclasses import dataclass, asdict
-from ..aux import myTransformerConfig, mySentenceTransformer, Projector, myTransformerBlock
+
 from torch import nn
 import torch
+
+from ...utils.modeling import myTransformerConfig, mySentenceTransformer, Projector, myTransformerBlock
 from .base_dialogue_model import BaseDialogueModel
 
 

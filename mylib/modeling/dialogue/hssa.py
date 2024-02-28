@@ -1,63 +1,58 @@
+from dataclasses import dataclass
 from torch import nn
+from ...utils.modeling import AveragePooling, SelfAttentionPooling
 from ..hssa import HSSAModel, HSSAConfig, HSSATokenizer
 from .base_dialogue_model import BaseDialogueModel
 
 
-class HSSADM(nn.Module, BaseDialogueModel):
+@dataclass
+class HSSADialogueEncoderConfig:
+    hf_model: str = 'sentence-transformers/all-mpnet-base-v2'
+    pooling: str = 'avg'    # 'avg' or `att`
+
+
+class HSSADialogueEncoder(nn.Module, BaseDialogueModel):
     def __init__(
             self,
-            hf_model_name,
-            config: HSSAConfig,
-            encode_utterances=False,
-            encode_dialogue=False
+            config: HSSADialogueEncoderConfig,
         ):
         super().__init__()
 
-        self.hf_model_name = hf_model_name
         self.config = config
+        self.hf_config = HSSAConfig()
 
-        if encode_dialogue and encode_utterances:
-            raise ValueError('either dialogue or utterance encodings can be demanded')
-        self.encode_dialogue = encode_dialogue
-        self.encode_utterances = encode_utterances
-
-        self.model = HSSAModel.from_pretrained(hf_model_name, config=config)
-        self.tokenizer = HSSATokenizer.from_pretrained(hf_model_name)
+        self.model = HSSAModel.from_pretrained(config.hf_model, config=self.hf_config)
+        self.tokenizer = HSSATokenizer.from_pretrained(config.hf_model)
         self.model.resize_token_embeddings(len(self.tokenizer))
-    
+
+        if config.pooling == 'avg':
+            self.pool = AveragePooling()
+        elif config.pooling == 'att':
+            self.pool = SelfAttentionPooling(self.get_hidden_size())
+        else:
+            raise ValueError(f'unknown pooling: {config.pooling}')
     @property
     def device(self):
         return self.model.device
 
     def forward(self, batch):
         """
-        returned shape:
-
-        - without pooling: (B, T, S, H) --- each token for each utterance for each dia in batch
-        - pool_utterance_level: (B, T, H) --- each utterance for each dia in batch
-        - pool_dialogue_level: (B, H) --- each dia
+        returned shape: (B, H)
         """
-        if self.encode_dialogue:
-            # add cls utterance
-            batch = [[{'speaker': None, 'utterance': ''}] + dia for dia in batch]
-        
+
         tokenized = self.tokenizer(batch).to(self.device)
-        # (B, T, S, H)
-        hidden_states = self.model(**tokenized)
+        hidden_states = self.model(**tokenized)     # (B, T, S, H)
+        hidden_states = hidden_states[:, :, 0, :]   # (B, T, H), cls tokens of utterances
+        outputs = self.pool(
+            last_hidden_state=hidden_states,
+            attention_mask=tokenized['utterance_mask']
+        )
         
-        if self.encode_dialogue:
-            # cls token of entire dialogue
-            hidden_states = hidden_states[:, 0, 0, :]
-        elif self.encode_utterances:
-            # cls tokens of utterances
-            hidden_states = hidden_states[:, :, 0, :]
-        
-        return hidden_states
+        return outputs
     
     def get_hidden_size(self):
-        return self.config.hidden_size
+        return self.hf_config.hidden_size
 
-    def get_hparams(self):
-        res = self.config.to_dict()
-        res['hf_model_name'] = self.hf_model_name
-        return res
+    @staticmethod
+    def _tokenize(tokenizer, batch):
+        return tokenizer(batch)

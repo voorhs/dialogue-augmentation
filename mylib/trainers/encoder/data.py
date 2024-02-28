@@ -1,8 +1,8 @@
 from argparse import Namespace
 from torch.utils.data import DataLoader
-from ..datasets import ContrastiveDataset, DomainDataset
-from ..learners import DialogueEncoderLearnerConfig
-from ..utils.training import TrainerConfig
+from ...datasets import ContrastiveDataset, DomainDataset
+from ...learners import DialogueEncoderLearnerConfig
+from ...utils.training import TrainerConfig
 
 
 def get_loaders(args: Namespace, learner_config: DialogueEncoderLearnerConfig, trainer_config: TrainerConfig):
