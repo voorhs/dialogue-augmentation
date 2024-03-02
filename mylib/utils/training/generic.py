@@ -71,7 +71,9 @@ def train(learner, train_loader, val_loader, config: TrainerConfig, args: Namesp
         # save_last=config.save_last,
         # save_top_k=config.save_top_k,
         # mode=config.mode,
-        every_n_epochs=1
+        every_n_epochs=1,
+        save_top_k=-1,
+        save_on_train_epoch_end=True
     )
     lr_monitor = LearningRateMonitor(logging_interval='step')
     callbacks = [checkpoint_callback, lr_monitor]
@@ -122,7 +124,7 @@ def train(learner, train_loader, val_loader, config: TrainerConfig, args: Namesp
 
         # fraction of data to use
         limit_train_batches=1.,
-        limit_val_batches=0,
+        limit_val_batches=1.,
 
         # logging and checkpointing
         # val_check_interval=config.interval,   # number of optimization steps between two validation runs

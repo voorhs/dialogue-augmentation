@@ -56,7 +56,7 @@ def get_loaders(args: Namespace, learner_config: DialogueEncoderLearnerConfig, t
     val_args = dict(
         batch_size=learner_config.batch_size,
         shuffle=False,
-        num_workers=trainer_config.n_workers,
+        num_workers=0,
         collate_fn=collate_fn,
         drop_last=False
     )
