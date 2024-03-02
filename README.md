@@ -218,3 +218,32 @@ python3 train_pairwise.py --cuda 0 --logger tb --mode max --metric-for-checkpoin
 3. make_contrastive.py
 4. filter_dataset_by_length.py both for contrastive and multiwoz
 5. train_dialogue_encoder.py
+
+### Aug Sets
+
+Набор 1 (trivial):
+
+- back-translate
+- insert
+- replace
+
+Набор 2 (advanced):
+
+- back-translate
+- insert
+- replace
+- shuffle
+- prune
+
+Набор 3 (crazy):
+
+- back-translate
+- insert
+- replace
+- shuffle
+- prune
+- back-translate-prune
+- shuffle-insert
+- shuffle-replace
+- prune-insert
+- prune-replace
