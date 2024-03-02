@@ -8,14 +8,14 @@ from torch.optim.lr_scheduler import LambdaLR
 
 @dataclass
 class BaseLearnerConfig:
-    max_lr: float = 3e-6
+    max_lr: float = 1e-5
     lr_div_factor: float = 10
     batch_size: int = 16
-    warmup_pct: float = 0.
+    warmup_pct: float = 0.1
     weight_decay = 1e-2
     betas : tuple = (0.9, 0.999)
     total_steps: int = None
-    lr_decay: bool = False
+    lr_decay: bool = True
 
 
 #! fix `get_parameter_group()`

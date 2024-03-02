@@ -193,17 +193,18 @@ Train dialogue encoder (domain benchmark as validation)
 ```bash
 python3 train_baseline_dialogue_encoder.py \
 --hf-model google-bert/bert-base-uncased \
---contrastive-path data/train-bert-base-uncased/bipr/ \
+--contrastive-path data/train-bert-base-uncased/trivial/ \
 --multiwoz-path data/benchmarks-bert-base-uncased/multiwoz \
 --bitod-path data/benchmarks-bert-base-uncased/bitod \
 --sgd-path data/benchmarks-bert-base-uncased/sgd \
---cuda "0" \
---logger tb \
---mode max \
+--cuda "0,1" \
+--logger comet \
+# --mode max \
 --pooling cls \
---metric-for-checkpoint multiwoz/logreg_accuracy \
---batch-size 32 \
---finetune-layers 1
+# --metric-for-checkpoint multiwoz/logreg_accuracy \
+--batch-size 128 \
+--finetune-layers 3 \
+--name trivial
 ```
 
 Train pairwise model

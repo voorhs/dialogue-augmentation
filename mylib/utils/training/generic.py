@@ -67,10 +67,11 @@ def train(learner, train_loader, val_loader, config: TrainerConfig, args: Namesp
     import os
     
     checkpoint_callback = ModelCheckpoint(
-        monitor=config.metric_for_checkpoint,
-        save_last=config.save_last,
-        save_top_k=config.save_top_k,
-        mode=config.mode,
+        # monitor=config.metric_for_checkpoint,
+        # save_last=config.save_last,
+        # save_top_k=config.save_top_k,
+        # mode=config.mode,
+        every_n_epochs=1
     )
     lr_monitor = LearningRateMonitor(logging_interval='step')
     callbacks = [checkpoint_callback, lr_monitor]
@@ -116,12 +117,12 @@ def train(learner, train_loader, val_loader, config: TrainerConfig, args: Namesp
         accelerator='gpu',
         deterministic=False,
         precision="16-mixed",
-        # devices=-1,
-        # strategy='ddp',
+        devices=-1,
+        strategy='ddp',
 
         # fraction of data to use
         limit_train_batches=1.,
-        limit_val_batches=1.,
+        limit_val_batches=0,
 
         # logging and checkpointing
         # val_check_interval=config.interval,   # number of optimization steps between two validation runs
