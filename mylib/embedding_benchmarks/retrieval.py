@@ -2,7 +2,7 @@ import torch
 from torchmetrics.retrieval import RetrievalMAP, RetrievalHitRate, RetrievalNormalizedDCG, RetrievalRecall
     
 
-def all_retrieval_metrics(X_train, Y_train, X_val, Y_val):
+def all_retrieval_metrics(X_train, Y_train, X_val, Y_val, multilabel=None):
     """
     Computes:
     - MAP
@@ -23,7 +23,7 @@ def all_retrieval_metrics(X_train, Y_train, X_val, Y_val):
 
     res = {}
     for metric in [RetrievalMAP, RetrievalHitRate, RetrievalNormalizedDCG, RetrievalRecall]:
-        for k in [10, 100, None]:
+        for k in [1, 10, 100, None]:
             metric_name = metric.__name__
             if k is not None:
                 metric_name = metric_name + f'_{k}'

@@ -20,6 +20,7 @@ class DialogueEncoderLearnerConfig(BaseLearnerConfig):
     loss: str = 'contrastive_symmetric'   # 'contrastive_cross', 'contrastive_symmetric', 'contrastive_bce'
     finetune_layers: int = 1
     dialogue_model: str = 'baseline'    # 'baseline' or 'hssa' (may be something else will emerge in future)
+    multilabel: bool = False
 
 
 class DialogueEncoderLearner(BaseLearner):
@@ -126,9 +127,9 @@ class DialogueEncoderLearner(BaseLearner):
     
     def on_validation_epoch_end(self) -> None:
         
-        multiwoz_metrics = all_embedding_metrics(self.multiwoz_train, self.multiwoz_validation)
-        bitod_metrics = all_embedding_metrics(self.bitod_train, self.bitod_validation)
-        sgd_metrics = all_embedding_metrics(self.sgd_train, self.sgd_validation)
+        multiwoz_metrics = all_embedding_metrics(self.multiwoz_train, self.multiwoz_validation, self.config.multilabel)
+        bitod_metrics = all_embedding_metrics(self.bitod_train, self.bitod_validation, self.config.multilabel)
+        sgd_metrics = all_embedding_metrics(self.sgd_train, self.sgd_validation, self.config.multilabel)
 
         # https://github.com/Lightning-AI/pytorch-lightning/issues/18803
         res = {}
