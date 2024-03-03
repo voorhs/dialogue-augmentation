@@ -27,6 +27,10 @@ def _gather(row: dict, content_keys):
     for k in content_keys:
         if k == 'content':
             continue
+
+        if row[k] is None:
+            continue
+
         pos.append({
             'content': json.loads(row[k]),
             'augmentation': k[8:],

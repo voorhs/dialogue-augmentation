@@ -1,11 +1,7 @@
 from dataclasses import dataclass
 
-import torch.nn as nn
 import torch
 import torch.nn.functional as F
-from torchmetrics.functional.classification import multilabel_f1_score
-
-import numpy as np
 
 from .generic import BaseLearnerConfig, BaseLearner
 from .loss import contrastive_loss
@@ -27,7 +23,7 @@ class DialogueEncoderLearner(BaseLearner):
         self.model = model
         self.config = config
 
-        # list of (embedding, target) pairs for multiwoz service clf (as validation)
+        # list of (embedding, target) pairs for validation
         self.multiwoz_train = []
         self.multiwoz_validation = []
         self.bitod_train = []
@@ -35,29 +31,18 @@ class DialogueEncoderLearner(BaseLearner):
         self.sgd_train = []
         self.sgd_validation = []
 
-        if self.config.loss == 'multiwoz_service_clf':
-            self.clf_head = nn.Linear(self.model.get_hidden_size(), 7)
-
     def forward(self, batch):
         return self._contrastive_step(batch)
 
     def _contrastive_step(self, batch):
-        """`batch` is a list of samples from ContrastiveDataset"""
-        origs = [sample['orig']['content'] for sample in batch]
-        
-        # select positives
-        points = np.random.uniform(low=0, high=1, size=len(batch))
-        counts = np.array([len(sample['pos']) for sample in batch])
-        pos_indices = np.floor(points * counts).astype(np.int_)
-        
-        positives = [sample['pos'][i]['content'] for i, sample in zip(pos_indices, batch)]
+        origs, positives = batch
 
         # encode all dialogues
         origs_enc = F.normalize(self.model(origs), dim=1)                   # (B, H)
         positives_enc = F.normalize(self.model(positives), dim=1)           # (B, H)
 
         # randomly swap correponding x and y to prevent from learning grammatics
-        batch_size = len(batch)
+        batch_size = len(origs)
         swap_or_not = torch.randn(batch_size) > 0
         origs_enc[swap_or_not], positives_enc[swap_or_not] = positives_enc[swap_or_not], origs_enc[swap_or_not]
 
@@ -69,19 +54,6 @@ class DialogueEncoderLearner(BaseLearner):
         metrics = all_accuracies(pairwise_scores)
 
         return loss, metrics
-
-    def _multiwoz_service_clf_step(self, batch):
-        """`batch` is a list of samples from MultiWOZServiceClfDataset"""
-        dialogues = [dia for dia, _ in batch]
-        targets = torch.stack([tar for _, tar in batch], dim=0)
-        
-        embeddings = self.model(dialogues)  # (B, H)
-        logits = self.clf_head(embeddings)  # (B, 7)
-        
-        loss = F.binary_cross_entropy_with_logits(logits, targets, reduction='mean')
-        metric = multilabel_f1_score(logits, targets, average='macro')
-
-        return loss, metric
 
     def training_step(self, batch, batch_idx):
         loss, metrics = self.forward(batch)

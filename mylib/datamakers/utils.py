@@ -41,7 +41,7 @@ def join(path_in, names_in, path_out):
         left = left.join(
             right,
             keys=['id', 'source_dataset_name', 'idx_within_source'],
-            join_type='inner',
+            join_type='left outer',
             right_suffix='_'+name
         )
 

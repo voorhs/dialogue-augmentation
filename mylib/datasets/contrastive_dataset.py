@@ -1,5 +1,6 @@
 from torch.utils.data import Dataset
 from datasets import load_from_disk
+from random import choice
 
 
 class ContrastiveDataset(Dataset):
@@ -15,22 +16,13 @@ class ContrastiveDataset(Dataset):
         """
         Loads one chunk and returns one training sample as
         {
-            'orig': dia,
-            'pos': list of dias,
+            "orig": orig dia's content,
+            "pos": one of augmentations' content,
         }
-        where each dia is represented with an object of the following schema:
-        ```
-        {
-            "type": "array",
-            "items":
-            {
-                "type": "object",
-                "properties":
-                {
-                    "utterance": {"type": "string"},
-                    "speaker": {"type": "number"}
-                }
-            }
-        }
-        ```"""
-        return self.dataset[i]
+        """
+        sample =  self.dataset[i]
+        orig = sample['orig']['content']
+        
+        positive = choice(sample['pos'])['content']
+
+        return orig, positive

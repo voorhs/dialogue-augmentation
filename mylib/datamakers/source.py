@@ -8,15 +8,15 @@ from mylib.utils.training import seed_everything
 names = [
     'MS-DC',
     'MetaLWOZ',
-    'MULTIWOZ2_2',
-    'SGD',
+    # 'MULTIWOZ2_2',
+    # 'SGD',
     'SimJointGEN',
     'KETOD',
     'FRAMES',
     'Disambiguation',
     'ABCD',
     'AirDialogue',
-    'BiTOD',
+    # 'BiTOD',
     'Taskmaster1'
 ]
 
@@ -25,15 +25,15 @@ upper_bound = 96
 upper_bounds = {
     'MS-DC': min(upper_bound, 250),
     'MetaLWOZ': min(upper_bound, 100),
-    'MULTIWOZ2_2': min(upper_bound, 75),
-    'SGD': None,
+    # 'MULTIWOZ2_2': min(upper_bound, 75),
+    # 'SGD': None,
     'SimJointGEN': upper_bound,
     'KETOD': upper_bound,
     'FRAMES': upper_bound,
     'Disambiguation': min(upper_bound, 60),
     'ABCD': upper_bound,
     'AirDialogue': upper_bound,
-    'BiTOD': upper_bound,
+    # 'BiTOD': upper_bound,
     'Taskmaster1': min(upper_bound, 200),
 }
 

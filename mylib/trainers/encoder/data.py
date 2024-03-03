@@ -42,7 +42,9 @@ def get_loaders(args: Namespace, learner_config: DialogueEncoderLearnerConfig, t
     )
     
     def collate_fn(batch):
-        return batch
+        origs =  [o for o, p in batch]
+        pos =  [p for o, p in batch]
+        return origs, pos
     
     contrastive_train_loader = DataLoader(
         dataset=contrastive_train,

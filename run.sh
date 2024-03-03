@@ -3,45 +3,45 @@ source .venv/bin/activate
 # bert
 python3 train_baseline_dialogue_encoder.py \
 --hf-model google-bert/bert-base-uncased \
---contrastive-path data/train-bert-base-uncased/trivial/ \
---multiwoz-path data/benchmarks-bert-base-uncased/multiwoz \
---bitod-path data/benchmarks-bert-base-uncased/bitod \
---sgd-path data/benchmarks-bert-base-uncased/sgd \
+--contrastive-path data/train-bert/trivial/ \
+--multiwoz-path data/benchmarks-bert/multiwoz \
+--bitod-path data/benchmarks-bert/bitod \
+--sgd-path data/benchmarks-bert/sgd \
 --cuda "0,1" \
 --logger comet \
 --pooling cls \
 --batch-size 128 \
 --finetune-layers 3 \
 --loss contrastive_symmetric \
---name bert-trivial
+--name bert-trivial-fair
 
 python3 train_baseline_dialogue_encoder.py \
 --hf-model google-bert/bert-base-uncased \
---contrastive-path data/train-bert-base-uncased/advanced/ \
---multiwoz-path data/benchmarks-bert-base-uncased/multiwoz \
---bitod-path data/benchmarks-bert-base-uncased/bitod \
---sgd-path data/benchmarks-bert-base-uncased/sgd \
+--contrastive-path data/train-bert/advanced/ \
+--multiwoz-path data/benchmarks-bert/multiwoz \
+--bitod-path data/benchmarks-bert/bitod \
+--sgd-path data/benchmarks-bert/sgd \
 --cuda "0,1" \
 --logger comet \
 --pooling cls \
 --batch-size 128 \
 --finetune-layers 3 \
 --loss contrastive_symmetric \
---name bert-advanced
+--name bert-advanced-fair
 
 python3 train_baseline_dialogue_encoder.py \
 --hf-model google-bert/bert-base-uncased \
---contrastive-path data/train-bert-base-uncased/crazy/ \
---multiwoz-path data/benchmarks-bert-base-uncased/multiwoz \
---bitod-path data/benchmarks-bert-base-uncased/bitod \
---sgd-path data/benchmarks-bert-base-uncased/sgd \
+--contrastive-path data/train-bert/crazy/ \
+--multiwoz-path data/benchmarks-bert/multiwoz \
+--bitod-path data/benchmarks-bert/bitod \
+--sgd-path data/benchmarks-bert/sgd \
 --cuda "0,1" \
 --logger comet \
 --pooling cls \
 --batch-size 128 \
 --finetune-layers 3 \
 --loss contrastive_symmetric \
---name bert-crazy
+--name bert-crazy-fair
 
 # roberta
 python3 train_baseline_dialogue_encoder.py \
@@ -56,7 +56,7 @@ python3 train_baseline_dialogue_encoder.py \
 --batch-size 128 \
 --finetune-layers 3 \
 --loss contrastive_symmetric \
---name roberta-trivial
+--name roberta-trivial-fair
 
 python3 train_baseline_dialogue_encoder.py \
 --hf-model FacebookAI/roberta-base \
@@ -70,7 +70,7 @@ python3 train_baseline_dialogue_encoder.py \
 --batch-size 128 \
 --finetune-layers 3 \
 --loss contrastive_symmetric \
---name roberta-advanced
+--name roberta-advanced-fair
 
 python3 train_baseline_dialogue_encoder.py \
 --hf-model FacebookAI/roberta-base \
@@ -84,7 +84,7 @@ python3 train_baseline_dialogue_encoder.py \
 --batch-size 128 \
 --finetune-layers 3 \
 --loss contrastive_symmetric \
---name roberta-crazy
+--name roberta-crazy-fair
 
 # retromae
 python3 train_baseline_dialogue_encoder.py \
@@ -99,7 +99,7 @@ python3 train_baseline_dialogue_encoder.py \
 --batch-size 128 \
 --finetune-layers 3 \
 --loss contrastive_symmetric \
---name retromae-trivial
+--name retromae-trivial-fair
 
 python3 train_baseline_dialogue_encoder.py \
 --hf-model Shitao/RetroMAE \
@@ -113,7 +113,7 @@ python3 train_baseline_dialogue_encoder.py \
 --batch-size 128 \
 --finetune-layers 3 \
 --loss contrastive_symmetric \
---name retromae-advanced
+--name retromae-advanced-fair
 
 python3 train_baseline_dialogue_encoder.py \
 --hf-model Shitao/RetroMAE \
@@ -127,4 +127,4 @@ python3 train_baseline_dialogue_encoder.py \
 --batch-size 128 \
 --finetune-layers 3 \
 --loss contrastive_symmetric \
---name retromae-crazy
+--name retromae-crazy-fair
