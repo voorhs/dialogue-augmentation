@@ -4,17 +4,16 @@ import torch.nn as nn
 import torch
 import torch.nn.functional as F
 from torchmetrics.functional.classification import multiclass_f1_score, multiclass_accuracy, multiclass_precision, multiclass_recall
-
+from torchmetrics.functional.classification import multilabel_f1_score, multilabel_accuracy, multilabel_precision, multilabel_recall
 from .generic import BaseLearnerConfig, BaseLearner
 
 
 @dataclass
 class DownstreamClassificationLearnerConfig(BaseLearnerConfig):
-    k: int = 1
-    temperature: float = 0.1
     finetune_layers: int = 1
-    dialogue_model: str = 'baseline'    # 'baseline' or 'hssa' (may be something else will emerge in future)
     n_classes: int = None
+    multilabel: bool = False
+    encoder_weights: str = None
 
 
 class DownstreamClassificationLearner(BaseLearner):
@@ -33,13 +32,26 @@ class DownstreamClassificationLearner(BaseLearner):
         embeddings = self.model(dialogues)  # (B, H)
         logits = self.clf_head(embeddings)  # (B, n_classes)
         
-        loss = F.cross_entropy(logits, targets, reduction='mean')
-        metrics = {
-            'f1_score': multiclass_f1_score(logits, targets, average='macro'),
-            'accuracy': multiclass_accuracy(logits, targets, average='macro'),
-            'precision': multiclass_precision(logits, targets, average='macro'),
-            'recall': multiclass_recall(logits, targets, average='macro'),
-        }
+        if self.config.multilabel:
+            loss = F.binary_cross_entropy_with_logits(logits, targets, reduction='mean')
+        else:
+            loss = F.cross_entropy(logits, targets, reduction='mean')
+
+        if self.config.multilabel:
+            metrics = {
+                'f1_score': multilabel_f1_score(logits, targets, average='macro', num_labels=self.config.n_classes),
+                'accuracy': multilabel_accuracy(logits, targets, average='macro', num_labels=self.config.n_classes),
+                'precision': multilabel_precision(logits, targets, average='macro', num_labels=self.config.n_classes),
+                'recall': multilabel_recall(logits, targets, average='macro', num_labels=self.config.n_classes),
+            }
+        else:
+            targets = torch.argmax(targets, dim=1)
+            metrics = {
+                'f1_score': multiclass_f1_score(logits, targets, average='macro', num_classes=self.config.n_classes),
+                'accuracy': multiclass_accuracy(logits, targets, average='macro', num_classes=self.config.n_classes),
+                'precision': multiclass_precision(logits, targets, average='macro', num_classes=self.config.n_classes),
+                'recall': multiclass_recall(logits, targets, average='macro', num_classes=self.config.n_classes),
+            }
 
         return loss, metrics
 
@@ -62,7 +74,7 @@ class DownstreamClassificationLearner(BaseLearner):
         )
         return loss
     
-    def validation_step(self, batch, batch_idx, dataloader_idx):
+    def validation_step(self, batch, batch_idx):
         loss, metrics = self.forward(batch)
         
         metrics['loss'] = loss

@@ -15,11 +15,9 @@ from ..embedding_benchmarks import all_embedding_metrics
 
 @dataclass
 class DialogueEncoderLearnerConfig(BaseLearnerConfig):
-    k: int = 1
     temperature: float = 0.1
     loss: str = 'contrastive_symmetric'   # 'contrastive_cross', 'contrastive_symmetric', 'contrastive_bce'
     finetune_layers: int = 1
-    dialogue_model: str = 'baseline'    # 'baseline' or 'hssa' (may be something else will emerge in future)
     multilabel: bool = False
 
 
