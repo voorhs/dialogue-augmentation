@@ -8,8 +8,13 @@ def get_aug_indicators(pos, target):
     return {t: int(t in augs) for t in target}
 
 
-def n_tokens(pos, tokenizers):
+def n_tokens(pos, tokenizers, target):
     res = {}
+    
+    for name, tok in tokenizers.items():
+        for t in target:
+            res[f'n-toks-{name}-{t}'] = None
+
     for name, tok in tokenizers.items():
         for aug in pos:
             input_ids = BaselineDialogueEncoder._tokenize(tok, [aug['content']])['input_ids']
@@ -35,8 +40,6 @@ def make_report(pack):
         target = ['back-translate', 'insert', 'replace', 'prune', 'shuffle', 'back-translate-prune', 'prune-insert', 'prune-replace', 'shuffle-insert', 'shuffle-replace']
     else:
         raise ValueError('unknown pack')
-    
-    print(f'==== {pack} ====')
 
     dataset = dataset.map(
         function=get_aug_indicators,
@@ -52,7 +55,8 @@ def make_report(pack):
                 'bert': AutoTokenizer.from_pretrained('google-bert/bert-base-uncased'),
                 'roberta': AutoTokenizer.from_pretrained('FacebookAI/roberta-base'),
                 'retromae': AutoTokenizer.from_pretrained('Shitao/RetroMAE')
-            }
+            },
+            target=target
         ),
         input_columns='pos',
         desc='counting dia tokens'
