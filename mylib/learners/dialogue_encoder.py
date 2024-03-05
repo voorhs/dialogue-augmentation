@@ -75,9 +75,11 @@ class DialogueEncoderLearner(BaseLearner):
         return loss
     
     def validation_step(self, batch, batch_idx, dataloader_idx):
-        dialogues = [dia for dia, _ in batch]
-        targets = torch.stack([tar for _, tar in batch], dim=0).detach().cpu()
+        dialogues, targets = batch
+
+        targets = torch.stack(targets, dim=0).detach().cpu()
         embeddings = self.model(dialogues).detach().cpu()
+        
         res = list(zip(embeddings, targets))
 
         if dataloader_idx == 0:

@@ -248,3 +248,32 @@ python3 train_pairwise.py --cuda 0 --logger tb --mode max --metric-for-checkpoin
 - shuffle-replace
 - prune-insert
 - prune-replace
+
+## Веса
+
+- Fair
+    - BERT
+        - trivial ba6388e710684d94af81ebab88c2ff5a
+        - advanced 0d0b24e2d3864cf8a6c8b7d5e15b1c83
+        - crazy d7e24b7b434e486d866f35d70ac0c503
+    - RoBERTa
+        - trivial e4fa2d98923e4c8ca4fbe20c7ccc4c67
+        - advanced 849fa15859484683a4341837e7d1dd1d
+        - crazy 523da04c3c5a41379acc298ee09c7a0a
+    - RetroMAE
+        - trivial 408af9ac5d114a9da1fa007277343f15
+        - advanced e2de548066f14753bdf9a646e992c02f
+        - crazy ca66a8cd07c4418daea805093d00cdd3
+- Unair
+    - BERT
+        - trivial 32118387351f4edf85d85582058e99ca
+        - advanced 38b54997a8704482b53f3935df110162
+        - crazy 07045f26f4554abc98058a25c1114f71
+    - RoBERTa
+        - trivial 115f79b06edc485e9477cffdf52d3293
+        - advanced e53f956ef0b5438094847ad06d2d374a
+        - crazy ecf6a3d7ae5a4293bd12171794b09a0f
+    - RetroMAE
+        - trivial 7b2d20d36b6c41778ac6ac44c13cac66
+        - advanced abcf0e71cb7347db8726cf2f119939bf
+        - crazy 739a35638b8e4031b747c99954d952f8

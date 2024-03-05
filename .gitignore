@@ -7,3 +7,4 @@ data-2
 .venv
 .python-version
 secrets.json
+*tar.gz
