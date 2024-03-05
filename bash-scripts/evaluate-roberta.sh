@@ -1,21 +1,21 @@
 CUDA=$1
 LOGGER=$2
 
-HF_MODEL="google-bert/bert-base-uncased"
+HF_MODEL="FacebookAI/roberta-base"
 SCRIPT="bash-scripts/collect-checkpoints.sh"
 
-TRIVIAL_FAIR="ba6388e710684d94af81ebab88c2ff5a"
-ADVANCED_FAIR="0d0b24e2d3864cf8a6c8b7d5e15b1c83"
-CRAZY_FAIR="d7e24b7b434e486d866f35d70ac0c503"
+TRIVIAL_FAIR="e4fa2d98923e4c8ca4fbe20c7ccc4c67"
+ADVANCED_FAIR="849fa15859484683a4341837e7d1dd1d"
+CRAZY_FAIR="523da04c3c5a41379acc298ee09c7a0a"
 
-TRIVIAL_UNFAIR="32118387351f4edf85d85582058e99ca"
-ADVANCED_UNFAIR="38b54997a8704482b53f3935df110162"
-CRAZY_UNFAIR="07045f26f4554abc98058a25c1114f71"
+TRIVIAL_UNFAIR="115f79b06edc485e9477cffdf52d3293"
+ADVANCED_UNFAIR="e53f956ef0b5438094847ad06d2d374a"
+CRAZY_UNFAIR="ecf6a3d7ae5a4293bd12171794b09a0f"
 
 EVALUATE_FAIR () {
     bash $SCRIPT \
         $TRIVIAL_FAIR \
-        eval-bert-trivial-fair"$1" \
+        eval-roberta-trivial-fair"$1" \
         $HF_MODEL \
         $2 \
         $CUDA \
@@ -24,7 +24,7 @@ EVALUATE_FAIR () {
 
     bash $SCRIPT \
         $ADVANCED_FAIR \
-        eval-bert-adanced-fair"$1" \
+        eval-roberta-adanced-fair"$1" \
         $HF_MODEL \
         $2 \
         $CUDA \
@@ -33,7 +33,7 @@ EVALUATE_FAIR () {
 
     bash $SCRIPT \
         $CRAZY_FAIR \
-        eval-bert-crazy-fair"$1" \
+        eval-roberta-crazy-fair"$1" \
         $HF_MODEL \
         $2 \
         $CUDA \
@@ -45,7 +45,7 @@ EVALUATE_FAIR () {
 EVALUATE_UNFAIR () {
     bash $SCRIPT \
         $TRIVIAL_UNFAIR \
-        eval-bert-trivial-unfair"$1" \
+        eval-roberta-trivial-unfair"$1" \
         $HF_MODEL \
         $2 \
         $CUDA \
@@ -54,7 +54,7 @@ EVALUATE_UNFAIR () {
 
     bash $SCRIPT \
         $ADVANCED_UNFAIR \
-        eval-bert-adanced-unfair"$1" \
+        eval-roberta-adanced-unfair"$1" \
         $HF_MODEL \
         $2 \
         $CUDA \
@@ -63,7 +63,7 @@ EVALUATE_UNFAIR () {
 
     bash $SCRIPT \
         $ADVANCED_UNFAIR \
-        eval-bert-crazy-unfair"$1" \
+        eval-roberta-crazy-unfair"$1" \
         $HF_MODEL \
         $2 \
         $CUDA \
@@ -73,8 +73,8 @@ EVALUATE_UNFAIR () {
 
 # ==== RUN ====
 
-EVALUATE_FAIR "-one-domain" "benchmarks-bert" "multiclass"
-EVALUATE_UNFAIR "-one-domain" "benchmarks-bert" "multiclass"
+EVALUATE_FAIR "-one-domain" "benchmarks-roberta" "multiclass"
+EVALUATE_UNFAIR "-one-domain" "benchmarks-roberta" "multilabel"
 
-EVALUATE_FAIR "-multi-domain" "benchmarks-md-bert" "multilabel"
-EVALUATE_UNFAIR "-multi-domain" "benchmarks-md-bert" "multilabel"
+EVALUATE_FAIR "-multi-domain" "benchmarks-md-roberta" "multilabel"
+EVALUATE_UNFAIR "-multi-domain" "benchmarks-md-roberta" "multilabel"

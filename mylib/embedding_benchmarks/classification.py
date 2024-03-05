@@ -6,7 +6,7 @@ from sklearn.metrics import accuracy_score, f1_score
 from .utils import BatchedKNNClassifier
 
 
-def all_classification_metrics(X_train, Y_train, X_val, Y_val, multilabel):
+def all_classification_metrics(X_train, Y_train, X_val, Y_val, benchmark):
     """
     Computes:
     - logreg accuracy
@@ -29,11 +29,10 @@ def all_classification_metrics(X_train, Y_train, X_val, Y_val, multilabel):
     Y_train = Y_train.numpy()
     Y_val = Y_val.numpy()
 
-    if not multilabel:
+    if benchmark == 'multiclass':
         Y_train = np.argmax(Y_train, axis=1)
         Y_val = np.argmax(Y_val, axis=1)
     
-    if not multilabel:
         # logreg
         logreg = LogisticRegression(random_state=0)
         pred_logreg = logreg.fit(X_train, Y_train).predict(X_val)
@@ -41,15 +40,7 @@ def all_classification_metrics(X_train, Y_train, X_val, Y_val, multilabel):
         res = {
             'logreg_accuracy': accuracy_score(Y_val, pred_logreg),
             'logreg_f1': f1_score(Y_val, pred_logreg, average='macro'),
-        } 
-    else:
-        mlp = MLPClassifier(hidden_layer_sizes=(), random_state=0)
-        pred_mlp = mlp.fit(X_train, Y_train).predict(X_val)
-        res = {
-            'mlp_f1': f1_score(Y_val, pred_mlp, average='macro'),
         }
-
-    if not multilabel:
         # knn
         batch_size = min(256, X_val.shape[0])
         knn = BatchedKNNClassifier(n_neighbors=50, batch_size=batch_size)
@@ -60,5 +51,14 @@ def all_classification_metrics(X_train, Y_train, X_val, Y_val, multilabel):
             y_pred = knn._predict_precomputed(k_indices[:, :k], k_distances[:, :k])
             res[f'{k}nn_accuracy'] = accuracy_score(Y_val, y_pred)
             res[f'{k}nn_f1'] = f1_score(Y_val, y_pred, average='macro')
+
+    elif benchmark == 'multilabel':
+        mlp = MLPClassifier(hidden_layer_sizes=(), random_state=0)
+        pred_mlp = mlp.fit(X_train, Y_train).predict(X_val)
+        res = {
+            'mlp_f1': f1_score(Y_val, pred_mlp, average='macro'),
+        }
+    else:
+        raise ValueError('uknown benchmark')
         
     return res

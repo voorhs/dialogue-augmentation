@@ -4,7 +4,7 @@ from torchmetrics.functional.classification import multiclass_confusion_matrix
 from torchmetrics.functional.clustering import v_measure_score
 
 
-def all_clusterization_metrics(X_train, Y_train, X_val, Y_val, multilabel=False):
+def all_clusterization_metrics(X_train, Y_train, X_val, Y_val, benchmark):
     """
     Computes:
     - purity
@@ -14,7 +14,7 @@ def all_clusterization_metrics(X_train, Y_train, X_val, Y_val, multilabel=False)
     Y_train: targets (N, k) with zeros and ones
     """
     
-    if multilabel:
+    if benchmark == 'multilabel':
         return {}
 
     X_train = X_train.numpy()

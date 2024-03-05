@@ -2,7 +2,7 @@ import torch
 from torchmetrics.retrieval import RetrievalMAP, RetrievalHitRate, RetrievalNormalizedDCG, RetrievalRecall
     
 
-def all_retrieval_metrics(X_train, Y_train, X_val, Y_val, multilabel=None):
+def all_retrieval_metrics(X_train, Y_train, X_val, Y_val, benchmark=None):
     """
     Computes:
     - MAP
