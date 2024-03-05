@@ -73,8 +73,8 @@ EVALUATE_UNFAIR () {
 
 # ==== RUN ====
 
-EVALUATE_FAIR "-one-domain" "benchmarks-retromae" false
-EVALUATE_UNFAIR "-one-domain" "benchmarks-retromae" false
+EVALUATE_FAIR "-one-domain" "benchmarks-retromae" "multiclass"
+EVALUATE_UNFAIR "-one-domain" "benchmarks-retromae" "multiclass"
 
-EVALUATE_FAIR "-multi-domain" "benchmarks-md-retromae" true
-EVALUATE_UNFAIR "-multi-domain" "benchmarks-md-retromae" true
+EVALUATE_FAIR "-multi-domain" "benchmarks-md-retromae" "multilabel"
+EVALUATE_UNFAIR "-multi-domain" "benchmarks-md-retromae" ""multilabel""
