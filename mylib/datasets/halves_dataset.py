@@ -14,31 +14,6 @@ class HalvesDataset(Dataset):
         return self.dataset.num_rows
     
     def __getitem__(self, i):
-        """
-        Loads one chunk and returns one dialogue, represented with an object of the following schema:
-        ```
-        {
-            "type": "object",
-            "properties":
-            {
-                "context":
-                {
-                    "type": "array",
-                    "items":
-                    {
-                        "type": "object",
-                        "properties":
-                        {
-                            "utterance": {"type": "string"},
-                            "speaker": {"type": "number"}
-                        }
-                    }
-                },
-                "target": same as "context"
-            }
-        }
-        ```"""
-
         dia = self.dataset[i]['orig']['content']
         
         if len(dia) == 2:
@@ -46,7 +21,4 @@ class HalvesDataset(Dataset):
         else:
             split_index = random.randint(a=1, b=len(dia)-2)
 
-        return {
-            'orig': {'content': dia[:split_index]},
-            'pos': [{'content': dia[split_index:]}],
-        }
+        return dia[:split_index], dia[split_index:]

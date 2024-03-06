@@ -124,7 +124,7 @@ def train(learner, train_loader, val_loader, config: TrainerConfig, args: Namesp
 
         # fraction of data to use
         limit_train_batches=1.,
-        limit_val_batches=1.,
+        limit_val_batches=0.,
 
         # logging and checkpointing
         # val_check_interval=config.interval,   # number of optimization steps between two validation runs
@@ -160,11 +160,7 @@ def train(learner, train_loader, val_loader, config: TrainerConfig, args: Namesp
 
 
 def validate(learner, val_loader, config: TrainerConfig, args: Namespace, project_name):
-    from lightning.pytorch.callbacks import LearningRateMonitor
     import os
-    
-    lr_monitor = LearningRateMonitor(logging_interval='step')
-    callbacks = [lr_monitor]
 
     if config.logger == 'comet':
         import comet_ml
@@ -211,7 +207,6 @@ def validate(learner, val_loader, config: TrainerConfig, args: Namespace, projec
         logger=logger,
         enable_progress_bar=False,
         profiler=None,
-        callbacks=callbacks,
     )
 
     if config.init_from is None:
