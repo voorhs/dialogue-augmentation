@@ -277,3 +277,46 @@ python3 train_pairwise.py --cuda 0 --logger tb --mode max --metric-for-checkpoin
         - trivial 7b2d20d36b6c41778ac6ac44c13cac66
         - advanced abcf0e71cb7347db8726cf2f119939bf
         - crazy 739a35638b8e4031b747c99954d952f8
+
+## Бенчмарки
+
+Имеются замеренные бенчмарки:
+- для моделей BERT, RoBERTA, RetroMAE
+- для сетов trivial, advanced, crazy
+- для сетов fair, unfair
+- для эпох 0 1 2 3 4
+- бенчмарки multiclass, multilabel
+
+Замеры для бейзлайнов:
+- raw: без контрастивного обучения (CL), просто претрейненные веса
+- halves: CL, где положительная пара получена путём деления одного диалога на две части
+
+В будущем:
+- бенчмарк downstream classification
+- разные виды CL: symmetric, cross, bce (?)
+- добавить дропаут над эмбедингом в качестве аугментации (?)
+
+## Сравнение
+
+Эксперимент 1:
+- для одной модели (BERT/RoBERTa/RetroMAE)
+- для последней эпохи (или в среднем для всех эпох)
+- для fair
+- сравнить сеты raw, halves, trivial, advanced, crazy
+- на бенчмарках multiclass, multilabel, downstream clf
+- оптимистическая гипотеза: raw < halves < trivial < advanced
+
+Эксперимент 2:
+- для одной модели
+- для последней эпохи
+- выбрать лучший сет среди raw, halves и тд
+- сравнить fair и unfair
+- на бенчмарках multiclass, multilabel, downstream clf
+- оптимистическая гипотеза: fair дает не сильно хуже качество
+
+Эксперимент 3:
+- для одной модели
+- для лучшего сета
+- сравнить эпохи
+- на бенчмарках multiclass, multilabel, downstream clf
+- оптимистическая гипотеза: существует оптимальное число эпох без переобучения и со значительным приростом относительно raw и halves
