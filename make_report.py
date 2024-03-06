@@ -22,8 +22,12 @@ def n_tokens(pos, tokenizers, target):
     return res
 
 
-def n_utterances(pos):
+def n_utterances(pos, target):
     res = {}
+
+    for t in target:
+        res[f'n-uts-{t}'] = None
+
     for aug in pos:
         res[f'n-uts-{aug["augmentation"]}'] = len(aug['content'])
     return res
@@ -62,7 +66,13 @@ def make_report(pack):
         desc='counting dia tokens'
     )
 
-    dataset = dataset.map(function=n_utterances, input_columns='pos', desc='counting utterances')
+    dataset = dataset.map(
+        function=n_utterances,
+        input_columns='pos',
+        fn_kwargs={'target': target},
+        desc='counting utterances'
+    )
+    
     dataset = dataset.remove_columns(['source_dataset_name', 'idx_within_source', 'id', 'pos', 'orig'])
     dataset.save_to_disk(f'data/reports/{pack}')
 
