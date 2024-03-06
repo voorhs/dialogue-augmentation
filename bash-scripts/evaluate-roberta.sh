@@ -76,5 +76,5 @@ EVALUATE_UNFAIR () {
 EVALUATE_FAIR "-one-domain" "benchmarks-roberta" "multiclass"
 EVALUATE_UNFAIR "-one-domain" "benchmarks-roberta" "multilabel"
 
-EVALUATE_FAIR "-multi-domain" "benchmarks-md-roberta" "multilabel"
-EVALUATE_UNFAIR "-multi-domain" "benchmarks-md-roberta" "multilabel"
+# EVALUATE_FAIR "-multi-domain" "benchmarks-md-roberta" "multilabel"
+# EVALUATE_UNFAIR "-multi-domain" "benchmarks-md-roberta" "multilabel"

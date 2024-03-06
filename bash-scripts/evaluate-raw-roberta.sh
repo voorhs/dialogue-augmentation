@@ -18,4 +18,4 @@ EVALUATE () {
 
 EVALUATE "one-domain" "benchmarks-roberta" "multiclass"
 
-EVALUATE "multi-domain" "benchmarks-md-roberta" "multilabel"
+# EVALUATE "multi-domain" "benchmarks-md-roberta" "multilabel"

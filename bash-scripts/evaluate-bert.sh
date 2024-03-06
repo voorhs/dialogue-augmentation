@@ -76,5 +76,5 @@ EVALUATE_UNFAIR () {
 EVALUATE_FAIR "-one-domain" "benchmarks-bert" "multiclass"
 EVALUATE_UNFAIR "-one-domain" "benchmarks-bert" "multiclass"
 
-EVALUATE_FAIR "-multi-domain" "benchmarks-md-bert" "multilabel"
-EVALUATE_UNFAIR "-multi-domain" "benchmarks-md-bert" "multilabel"
+# EVALUATE_FAIR "-multi-domain" "benchmarks-md-bert" "multilabel"
+# EVALUATE_UNFAIR "-multi-domain" "benchmarks-md-bert" "multilabel"

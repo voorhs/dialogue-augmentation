@@ -1,18 +1,18 @@
 CUDA=$1
 LOGGER=$2
 
-HF_MODEL="google-bert/bert-base-uncased"
+HF_MODEL="FacebookAI/roberta-base"
 SCRIPT="bash-scripts/collect-checkpoints.sh"
 
-TRIVIAL_FAIR="dd2c00a94bab43d5a85588782d1c16a9"
-ADVANCED_FAIR="c1a1debf410f41d4baece64c36b322d8"
-CRAZY_FAIR="40481ab4834f40a5bc2c0df4862d3adb"
+TRIVIAL_FAIR="caee9e3358d9476fa0f6d1504740239e"
+ADVANCED_FAIR="f60540d763ff4260919483147d8d2e28"
+CRAZY_FAIR="8a80bf7248b14f23ba6640fae2d4a9b6"
 
 
 EVALUATE () {
     bash $SCRIPT \
         $TRIVIAL_FAIR \
-        eval-bert-trivial-halves-"$1" \
+        eval-roberta-trivial-halves-"$1" \
         $HF_MODEL \
         $2 \
         $CUDA \
@@ -21,7 +21,7 @@ EVALUATE () {
 
     bash $SCRIPT \
         $ADVANCED_FAIR \
-        eval-bert-adanced-halves-"$1" \
+        eval-roberta-adanced-halves-"$1" \
         $HF_MODEL \
         $2 \
         $CUDA \
@@ -30,7 +30,7 @@ EVALUATE () {
 
     bash $SCRIPT \
         $CRAZY_FAIR \
-        eval-bert-crazy-halves-"$1" \
+        eval-roberta-crazy-halves-"$1" \
         $HF_MODEL \
         $2 \
         $CUDA \
@@ -41,6 +41,6 @@ EVALUATE () {
 
 # ==== RUN ====
 
-EVALUATE "one-domain" "benchmarks-bert" "multiclass"
+EVALUATE "one-domain" "benchmarks-roberta" "multiclass"
 
-# EVALUATE "multi-domain" "benchmarks-md-bert" "multilabel"
+# EVALUATE "multi-domain" "benchmarks-md-roberta" "multilabel"

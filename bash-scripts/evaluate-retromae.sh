@@ -76,5 +76,5 @@ EVALUATE_UNFAIR () {
 # EVALUATE_FAIR "-one-domain" "benchmarks-retromae" "multiclass"
 # EVALUATE_UNFAIR "-one-domain" "benchmarks-retromae" "multiclass"
 
-EVALUATE_FAIR "-multi-domain" "benchmarks-md-retromae" "multilabel"
-EVALUATE_UNFAIR "-multi-domain" "benchmarks-md-retromae" ""multilabel""
+# EVALUATE_FAIR "-multi-domain" "benchmarks-md-retromae" "multilabel"
+# EVALUATE_UNFAIR "-multi-domain" "benchmarks-md-retromae" ""multilabel""
