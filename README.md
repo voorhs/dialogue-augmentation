@@ -293,30 +293,39 @@ python3 train_pairwise.py --cuda 0 --logger tb --mode max --metric-for-checkpoin
 
 В будущем:
 - бенчмарк downstream classification
+- бенчмарк MTEB (?)
 - разные виды CL: symmetric, cross, bce (?)
 - добавить дропаут над эмбедингом в качестве аугментации (?)
 
 ## Сравнение
 
 Эксперимент 1:
-- для одной модели (BERT/RoBERTa/RetroMAE)
+- для каждой модели (BERT/RoBERTa/RetroMAE)
 - для последней эпохи (или в среднем для всех эпох)
 - для fair
 - сравнить сеты raw, halves, trivial, advanced, crazy
-- на бенчмарках multiclass, multilabel, downstream clf
+- на бенчмарках multiclass, multilabel
 - оптимистическая гипотеза: raw < halves < trivial < advanced
 
 Эксперимент 2:
-- для одной модели
+- для каждой модели
 - для последней эпохи
 - выбрать лучший сет среди raw, halves и тд
 - сравнить fair и unfair
-- на бенчмарках multiclass, multilabel, downstream clf
+- на бенчмарках multiclass, multilabel
 - оптимистическая гипотеза: fair дает не сильно хуже качество
 
 Эксперимент 3:
-- для одной модели
+- для каждой модели
 - для лучшего сета
 - сравнить эпохи
-- на бенчмарках multiclass, multilabel, downstream clf
+- на бенчмарках multiclass, multilabel
 - оптимистическая гипотеза: существует оптимальное число эпох без переобучения и со значительным приростом относительно raw и halves
+
+Эксперимент 4:
+- для лучшего сета
+- для последней эпохи
+- для fair
+- сравнить все модели до и после CL 
+- на бенчмарках multiclass, multilabel
+- оптимистическая гипотеза: худшая модель после обучения не хуже чем лучшая модель до обучения
