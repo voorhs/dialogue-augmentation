@@ -209,8 +209,8 @@ def validate(learner, val_loader, config: TrainerConfig, args: Namespace, projec
         profiler=None,
     )
 
-    if config.init_from is None:
-        raise ValueError('provide path to checkpoint via `--init-from PATH` argument')
+    # if config.init_from is None:
+    #     raise ValueError('provide path to checkpoint via `--init-from PATH` argument')
 
     trainer.validate(learner, val_loader, ckpt_path=config.init_from)
 

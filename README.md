@@ -278,7 +278,7 @@ python3 train_pairwise.py --cuda 0 --logger tb --mode max --metric-for-checkpoin
         - advanced abcf0e71cb7347db8726cf2f119939bf
         - crazy 739a35638b8e4031b747c99954d952f8
 
-## Бенчмарки
+## Результаты скоринга
 
 Имеются замеренные бенчмарки:
 - для моделей BERT, RoBERTA, RetroMAE
@@ -329,3 +329,36 @@ python3 train_pairwise.py --cuda 0 --logger tb --mode max --metric-for-checkpoin
 - сравнить все модели до и после CL 
 - на бенчмарках multiclass, multilabel
 - оптимистическая гипотеза: худшая модель после обучения не хуже чем лучшая модель до обучения
+
+## Бенчмарки которые стоит смотреть
+
+- ~~Классификационные метрики~~ все уходят в 1
+- Кластеризационные и ретривные метрики только для сравнения с необученной моделью
+- мультилейбл метрики вообще в мусорку
+- downstream classification еще не смотрел но скорее всего так же плохо будет
+
+Идеи диалоговых бенчмарков:
+- бенчмарки егора
+- синтезировать pair binary clf dataset c помощью LLM
+- mteb на plain text
+
+## Аугментации
+
+Без вспомогательной модели:
+- halves
+- dropout
+
+Trivial легкий:
+- insert
+- replace
+
+Trivial тяжелый:
+- insert
+- replace
+- back-translate
+
+Advanced:
+- prune
+- shuffle
+- +trivial
+

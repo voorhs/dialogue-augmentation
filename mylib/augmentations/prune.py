@@ -4,26 +4,18 @@ import torch
 import torch.nn.functional as F
 from tqdm import tqdm
 
-from ..modeling.pairwise import Pairwise, PairwiseModelConfig
-from ..learners import PairwiseLearner
+from ..modeling.pairwise import SimplifiedPairwise, SimplifiedPairwiseModelConfig
 from ..utils.modeling.generic import mySentenceTransformer
 
 
 def _load_pairwise_cat(ckpt_path, device):
     encoder_name = 'aws-ai/dse-bert-base'
-
     _encoder = mySentenceTransformer(encoder_name)
-    
-    model = Pairwise(
-        model=_encoder,
-        config=PairwiseModelConfig()
-    )
 
-    model.load_checkpoint(
-        path_to_ckpt=ckpt_path,
-        map_location=device,
-        learner_class=PairwiseLearner
-    )
+    model = SimplifiedPairwise(
+        model=_encoder,
+        config=SimplifiedPairwiseModelConfig(context_size=3)
+    ).to(device)
     return model.eval()
 
 
@@ -40,7 +32,7 @@ class Pruner:
         
 
     @staticmethod
-    def _cut(model: Pairwise, dia):
+    def _cut(model: SimplifiedPairwise, dia):
         """drops all clusters except the biggest one. applies transformation only to dialogues with 6 utterances at least"""
         if len(dia) < 6:
             return None, -np.inf
@@ -68,14 +60,14 @@ class Pruner:
 
 
 @torch.no_grad()
-def _cluster(model: Pairwise, dia, n_clusters):
+def _cluster(model: SimplifiedPairwise, dia, n_clusters):
     """clusters utterances within dia according to similarities from pairwise model"""
     cosine_similarities = get_similarities(model, dia)
     
     # add last row because last target never was used as context
     # add first column because first context never was used as target
     cosine_similarities = F.pad(cosine_similarities, pad=(1, 0, 0, 1))
-    distance_matrix = 1 / (cosine_similarities + 1e-5)
+    distance_matrix = 1 - cosine_similarities
 
     labels = AgglomerativeClustering(
         n_clusters=n_clusters,

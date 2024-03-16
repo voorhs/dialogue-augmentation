@@ -10,3 +10,9 @@ class PairwiseModelConfig:
     speaker_embedding_dim = 8
     projector_dropout: float = 0.1
     hf_model: str = 'aws-ai/dse-bert-base'
+
+
+@dataclass
+class SimplifiedPairwiseModelConfig:
+    context_size: int = 2
+    hf_model: str = 'aws-ai/dse-bert-base'

@@ -2,7 +2,7 @@ import torch
 from torch import nn
 import torch.nn.functional as F
 
-from .config import PairwiseModelConfig
+from .config import PairwiseModelConfig, SimplifiedPairwiseModelConfig
 from ...utils.modeling.generic import mySentenceTransformer
 
 
@@ -58,6 +58,24 @@ class ContextEncoderConcat(BaseContextEncoder):
 
     def get_encoding_size(self):
         return self.sentence_encoder.get_sentence_embedding_size() * self.config.context_size
+
+
+class SimplifiedContextEncoder(BaseContextEncoder):
+    def __init__(self, sentence_encoder: mySentenceTransformer):
+        super().__init__()
+
+        self.sentence_encoder = sentence_encoder
+    
+    def forward(self, batch):
+        uts = []
+        for dia in batch:
+            cur_uts = '[SEP]'.join([item['utterance'] for item in dia])
+            uts.extend(cur_uts)
+        
+        return self.sentence_encoder(uts)
+
+    def get_encoding_size(self):
+        return self.sentence_encoder.get_sentence_embedding_size()
 
 
 # deprecated and not supported

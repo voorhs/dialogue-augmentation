@@ -15,6 +15,7 @@ class DialogueEncoderLearnerConfig(BaseLearnerConfig):
     loss: str = 'contrastive_symmetric'   # 'contrastive_cross', 'contrastive_symmetric', 'contrastive_bce'
     finetune_layers: int = 1
     benchmark: str = None   # 'multiclass' or 'multilabel'
+    emb_dropout: float = 0.
 
 
 class DialogueEncoderLearner(BaseLearner):
@@ -38,8 +39,16 @@ class DialogueEncoderLearner(BaseLearner):
         origs, positives = batch
 
         # encode all dialogues
-        origs_enc = F.normalize(self.model(origs), dim=1)                   # (B, H)
-        positives_enc = F.normalize(self.model(positives), dim=1)           # (B, H)
+        origs_enc = self.model(origs)                   # (B, H)
+        positives_enc = self.model(positives)           # (B, H)
+
+        if self.config.emb_dropout != 0.:
+            args = dict(p=self.config.emb_dropout, training=self.training, inplace=True)
+            F.dropout(origs_enc, **args)
+            F.dropout(positives_enc, **args)
+        
+        origs_enc = F.normalize(origs_enc, dim=1)
+        positives_enc = F.normalize(positives_enc, dim=1)
 
         # randomly swap correponding x and y to prevent from learning grammatics
         batch_size = len(origs)

@@ -5,7 +5,7 @@ import torch.nn.functional as F
 import numpy as np
 from tqdm import tqdm
 
-from .prune import _load_pairwise_cat, _cluster, Pairwise, get_similarities
+from .prune import _load_pairwise_cat, _cluster, SimplifiedPairwise, get_similarities
 
 
 class Shuffler:
@@ -27,7 +27,7 @@ class Shuffler:
 
     @staticmethod
     @torch.no_grad()
-    def _shuffle(model: Pairwise, dia):
+    def _shuffle(model: SimplifiedPairwise, dia):
         if len(dia) < 12:
             return None, -np.inf
 
