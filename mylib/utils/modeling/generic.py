@@ -24,7 +24,12 @@ class mySentenceTransformer(nn.Module):
         self.pooler = AveragePooling()
 
     def forward(self, sentences: List[str]):
-        inputs = self.tokenizer(sentences, padding='longest', return_tensors='pt').to(self.model.device)
+        inputs = self.tokenizer(
+            sentences,
+            padding='longest',
+            return_tensors='pt',
+            truncation=True
+        ).to(self.model.device)
         output = self.model(**inputs)
         return self.pooler(output.last_hidden_state, inputs['attention_mask'])
 

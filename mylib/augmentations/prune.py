@@ -85,7 +85,7 @@ def make_batch_from_dia(dialogue):
     batch = []
     for i in range(1, len(dialogue)):
         batch.append({
-            'context': dialogue[:i],
+            'context': dialogue[max(0,i-3):i],
             'target': dialogue[i]
         })
     return batch
