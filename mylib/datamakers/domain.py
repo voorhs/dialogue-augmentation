@@ -87,7 +87,7 @@ domains = {
         'Restaurants',
         'RideSharing',
         'Services',
-        'Travel',
-        'Weather'
+        # 'Travel',
+        # 'Weather'
     ]
 }

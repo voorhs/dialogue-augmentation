@@ -22,7 +22,7 @@ def get_loaders(args: Namespace, learner_config: DialogueEncoderLearnerConfig, t
     )
     multiwoz_val = DomainDataset(
         path=args.multiwoz_path,
-        split='validation'
+        split='test'
     )
     bitod_train = DomainDataset(
         path=args.bitod_path,
@@ -30,7 +30,7 @@ def get_loaders(args: Namespace, learner_config: DialogueEncoderLearnerConfig, t
     )
     bitod_val = DomainDataset(
         path=args.bitod_path,
-        split='validation'
+        split='test'
     )
     sgd_train = DomainDataset(
         path=args.sgd_path,
@@ -38,7 +38,7 @@ def get_loaders(args: Namespace, learner_config: DialogueEncoderLearnerConfig, t
     )
     sgd_val = DomainDataset(
         path=args.sgd_path,
-        split='validation'
+        split='test'
     )
     
     def collate_fn(batch):

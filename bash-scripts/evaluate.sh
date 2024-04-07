@@ -5,6 +5,7 @@ BENCHMARKS=$4
 CUDA=$5
 LOGGER=$6
 MULTILABEL=$7
+POOLING=$8
 
 source .venv/bin/activate
 
@@ -16,8 +17,8 @@ python3 train_baseline_dialogue_encoder.py \
 --sgd-path data/$BENCHMARKS/sgd \
 --cuda $CUDA \
 --logger $LOGGER \
---pooling cls \
---batch-size 128 \
+--pooling $POOLING \
+--batch-size 32 \
 --finetune-layers 0 \
 --name $NAME \
 --validate \
