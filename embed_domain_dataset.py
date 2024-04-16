@@ -19,7 +19,8 @@ if __name__ == "__main__":
     
     config = BaselineDialogueEncoderConfig(
         hf_model=args.model,
-        pooling=args.pooling
+        pooling=args.pooling,
+        truncation=True
     )
     encoder = BaselineDialogueEncoder(config).cuda().eval()
 

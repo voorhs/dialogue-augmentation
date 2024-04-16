@@ -11,6 +11,7 @@ from .base_dialogue_model import BaseDialogueModel
 class BaselineDialogueEncoderConfig:
     hf_model: str = 'google-bert/bert-base-uncased'
     pooling: str = 'cls' # 'avg' or 'cls' or 'att'
+    truncation: bool = False
 
 
 class BaselineDialogueEncoder(nn.Module, BaseDialogueModel):
@@ -49,7 +50,7 @@ class BaselineDialogueEncoder(nn.Module, BaseDialogueModel):
         return [f'{item["speaker"]} {item["utterance"]}' for item in dia]
 
     @staticmethod
-    def _tokenize(tokenizer, batch):
+    def _tokenize(tokenizer: AutoTokenizer, batch, truncation=False):
         """
         1. convert each dialogue to a single string of the following format: 
             "0 Hello, dear![SEP]1 Hi.[SEP]0 How can I help you?[SEP]1 Tell me a joke."
@@ -57,7 +58,7 @@ class BaselineDialogueEncoder(nn.Module, BaseDialogueModel):
         """
         sep = tokenizer.sep_token
         parsed = [sep.join(BaselineDialogueEncoder._parse(dia)) for dia in batch]
-        inputs = tokenizer(parsed, padding='longest', return_tensors='pt')
+        inputs = tokenizer(parsed, padding='longest', return_tensors='pt', truncation=truncation)
         return inputs
     
     def forward(self, batch):
@@ -65,7 +66,7 @@ class BaselineDialogueEncoder(nn.Module, BaseDialogueModel):
         input: batch of dialogues
         output: (B,H)
         """
-        inputs = self._tokenize(self.tokenizer, batch).to(self.device)
+        inputs = self._tokenize(self.tokenizer, batch, truncation=self.config.truncation).to(self.device)
         outputs = self.model(**inputs)
         encodings = self.pooler(outputs.last_hidden_state, inputs.attention_mask)
         return encodings

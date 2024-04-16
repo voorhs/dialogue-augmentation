@@ -15,7 +15,7 @@ python3 train_baseline_dialogue_encoder.py \
 --sgd-path data/$BENCHMARKS/sgd \
 --cuda $CUDA \
 --logger $LOGGER \
---pooling cls \
+--pooling avg \
 --batch-size 128 \
 --finetune-layers 0 \
 --name $NAME \
