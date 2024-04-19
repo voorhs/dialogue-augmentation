@@ -6,7 +6,7 @@ if __name__ == "__main__":
     ap.add_argument('--path-in', required=True)
     ap.add_argument('--path-out', required=True)
     ap.add_argument('--model', required=True)
-    ap.add_argument('--pooling', choices=['cls', 'avg'], required=True)
+    ap.add_argument('--pooling', choices=['cls', 'avg', 'last'], required=True)
     ap.add_argument('--batch-size', required=True, type=int)
     ap.add_argument('--cuda', required=True)
     args = ap.parse_args()
@@ -20,8 +20,10 @@ if __name__ == "__main__":
     config = BaselineDialogueEncoderConfig(
         hf_model=args.model,
         pooling=args.pooling,
-        truncation=True
+        truncation=True,
+        max_length=4096 if args.pooling == 'last' else 512
     )
+
     encoder = BaselineDialogueEncoder(config).cuda().eval()
 
     # load data
