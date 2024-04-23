@@ -33,11 +33,23 @@ if __name__ == "__main__":
     dataset = load_from_disk(args.path_in)
     
     # feed to model and collect embeddings
+    from mylib.utils.modeling import AveragePooling
+
+    pooler = AveragePooling().to(encoder.device)
+
+    def get_hidden_states(batch):
+        embeddings, hidden_states = encoder.get_all_hidden_states(batch, pooler)
+        return dict(
+            embedding=embeddings.detach().cpu().numpy(),
+            hidden_states=hidden_states.detach().cpu().numpy()
+        )
+
     from torch import no_grad
 
     with no_grad():
         dataset = dataset.map(
-            lambda batch: {'embedding': encoder(batch).detach().cpu().numpy()},
+            get_hidden_states,
+            fn_kwargs=dict(pooler=pooler),
             input_columns='content',
             batched=True,
             batch_size=args.batch_size

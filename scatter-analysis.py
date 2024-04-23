@@ -1,12 +1,16 @@
 import os
-import numpy as np
-from sklearn.decomposition import PCA
-from sklearn.manifold import TSNE
-import pandas as pd
-from datasets import load_from_disk, disable_caching, concatenate_datasets
+
 import matplotlib.pyplot as plt
+import numpy as np
+import pandas as pd
 import seaborn as sns
+from datasets import concatenate_datasets, disable_caching, load_from_disk
 from numpy.linalg import norm
+from sklearn.decomposition import PCA
+from sklearn.linear_model import LogisticRegression
+from sklearn.manifold import TSNE
+from sklearn.model_selection import train_test_split
+from sklearn.neighbors import KNeighborsClassifier
 
 sns.set_style("whitegrid")
 
@@ -84,7 +88,9 @@ def get_pca_df(ds1, ds2, seed=0):
 
 
 def visualize_pca(df, title, model):
-    sns.scatterplot(df, x=0, y=1, hue="services", style="aug", s=2)
+    fig, ax = plt.subplots(1, 2, figsize=(12, 5))
+    sns.scatterplot(df[df['aug'] == 'orig'], x=0, y=1, hue="services", s=2, ax=ax[0])
+    sns.scatterplot(df, x=0, y=1, hue="services", style="aug", s=2, ax=ax[1])
     plt.title(title)
     plt.legend(bbox_to_anchor=(1.1, 1.05))
 
@@ -166,37 +172,121 @@ def cosine_analysis(ds_1, ds_2, model, aug):
     plt.savefig(fpath, bbox_inches="tight")
     plt.close()
 
+def aug_prediction(ds_1, ds_2, model, aug, seed=0):
+    df_1 = ds_1.to_pandas()
+    df_2 = ds_2.to_pandas()
+    df_joined = df_1.join(df_2, on="idx_within_source", how="inner", rsuffix="_augmented")
+    
+    emb_orig = np.stack(df_joined['embedding'])
+    emb_aug = np.stack(df_joined['embedding_augmented'])
+
+    # emb_orig /= np.linalg.norm(emb_orig, axis=1, keepdims=True)
+    # emb_aug /= np.linalg.norm(emb_aug, axis=1, keepdims=True)
+    
+    np.random.seed(seed)
+    choose_orig = np.random.randn(len(df_joined)) > 0
+    X = emb_aug.copy()
+    X[choose_orig] = emb_orig[choose_orig]
+
+    y = choose_orig.astype('int')
+    X_train, X_test, y_train, y_test = train_test_split(X, y, random_state=seed)
+
+    logreg = LogisticRegression(max_iter=1000)
+    logreg.fit(X_train, y_train)
+    logreg_accuracy = logreg.score(X_test, y_test)
+
+    knn = KNeighborsClassifier(metric='cosine')
+    knn.fit(X_train, y_train)
+    knn_accuracy = knn.score(X_test, y_test)
+    
+    folder = f"figures/{model}"
+    if not os.path.exists(folder):
+        os.makedirs(folder)
+    fpath = os.path.join(folder, f"{aug}-prediction.txt")
+
+    open(fpath, 'w').write(f'{logreg_accuracy=:.4f}\n{knn_accuracy=:.4f}')
+
+
+def aug_prediction_all(ds_list, model, seed=0):
+    df_list = [ds.to_pandas() for ds in ds_list]
+
+    df_joined = df_list[0].join(df_list[1], on="idx_within_source", how="inner", rsuffix="_1")
+
+    if len(df_list) > 1:
+        for i in range(2, len(df_list)):
+            df_joined = df_joined.join(df_list[i], on="idx_within_source", how="inner", rsuffix=f"_{i}")
+    df_joined.rename(columns={'embedding': 'embedding_0'}, inplace=True)
+    
+    np.random.seed(seed)
+    y = np.random.choice(len(df_list), size=len(df_joined))
+    X = [df_joined.loc[i, f'embedding_{aug}'] for i, aug in enumerate(y)]
+
+    X_train, X_test, y_train, y_test = train_test_split(X, y, random_state=seed)
+
+    logreg = LogisticRegression(max_iter=1000)
+    logreg.fit(X_train, y_train)
+    logreg_accuracy = logreg.score(X_test, y_test)
+
+    knn = KNeighborsClassifier(metric='cosine')
+    knn.fit(X_train, y_train)
+    knn_accuracy = knn.score(X_test, y_test)
+    
+    folder = f"figures/{model}"
+    if not os.path.exists(folder):
+        os.makedirs(folder)
+    fpath = os.path.join(folder, "prediction-all.txt")
+
+    open(fpath, 'w').write(f'{logreg_accuracy=:.4f}\n{knn_accuracy=:.4f}')
+
+
 if __name__ == "__main__":
     paths = {
         "BERT": "bert-filtered",
-        "BERT-trained": "bert-trained-filtered",
+        "BERT-trained-1": "bert-traned-1-filtered",
+        "BERT-trained-2": "bert-traned-2-filtered",
+        "BERT-trained-3": "bert-traned-3-filtered",
+        "BERT-trained-4": "bert-traned-4-filtered",
         "BGE": "bge-filtered",
-        "BGE-trained": "bge-trained-filtered",
+        "BGE-trained-1": "bge-trained-1-filtered",
+        "BGE-trained-2": "bge-trained-2-filtered",
+        "BGE-trained-3": "bge-trained-3-filtered",
+        "BGE-trained-4": "bge-trained-4-filtered",
         "DSE": "dse-filtered",
-        "DSE-trained": "dse-trained-filtered",
+        "DSE-trained-1": "dse-trained-1-filtered",
+        "DSE-trained-2": "dse-trained-2-filtered",
+        "DSE-trained-3": "dse-trained-3-filtered",
+        "DSE-trained-4": "dse-trained-4-filtered",
         "ANCE": "ance-filtered",
         "DPR": "dpr-filtered",
         "SFR": "sfr-embedded",
         "RetroMAE": "retromae-filtered",
-        "RetroMAE-trained": "retromae-trained-filtered",
+        "RetroMAE-trained-1": "retromae-trained-1-filtered",
+        "RetroMAE-trained-2": "retromae-trained-2-filtered",
+        "RetroMAE-trained-3": "retromae-trained-3-filtered",
+        "RetroMAE-trained-4": "retromae-trained-4-filtered",
+        
     }
 
     for model, ds_path in paths.items():
-        dataset = load_from_disk(f"data/scatter-analysis/{ds_path}/sgd")
-        dataset = oh_to_str(dataset)
-        dataset = add_const_column(dataset, "aug", "orig")
-        df = get_tsne_df(dataset)
-        dataset_augs = {}
-        df_augs = {}
+        dataset = {}
+        dataset['orig'] = load_from_disk(f"data/scatter-analysis/{ds_path}/sgd")
+        dataset['orig'] = oh_to_str(dataset['orig'])
+        dataset['orig'] = add_const_column(dataset['orig'], "aug", "orig")
+        df = {}
+        df['orig'] = get_tsne_df(dataset['orig'])
         for aug in ["insert", "replace", "prune", "shuffle"]:
-            dataset_aug = load_from_disk(f"data/scatter-analysis/{ds_path}/sgd-{aug}")
-            dataset_aug = oh_to_str(dataset_aug)
-            dataset_aug = add_const_column(dataset_aug, "aug", aug)
+            dataset[aug] = load_from_disk(f"data/scatter-analysis/{ds_path}/sgd-{aug}")
+            dataset[aug] = oh_to_str(dataset[aug])
+            dataset[aug] = add_const_column(dataset[aug], "aug", aug)
             
-            df_aug = get_pca_df(dataset, dataset_aug)
-            visualize_pca(df_aug, f"orig + {aug}", model)
+            df[aug] = get_pca_df(dataset['orig'], dataset[aug])
+            visualize_pca(df[aug], f"orig + {aug}", model)
 
-            # df_aug = get_tsne_df(concatenate_datasets([dataset, dataset_aug]))
-            # visualize_tsne(df, df_aug, "orig", f"orig + {aug}", model)
+            df[aug] = get_tsne_df(concatenate_datasets([dataset, dataset[aug]]))
+            visualize_tsne(df['orig'], df[aug], "orig", f"orig + {aug}", model)
 
-            # cosine_analysis(dataset, dataset_aug, model, aug)
+            cosine_analysis(dataset['orig'], dataset[aug], model, aug)
+
+            aug_prediction(dataset['orig'], dataset[aug], model, aug)
+
+        aug_prediction_all(list(dataset.values()), model)
