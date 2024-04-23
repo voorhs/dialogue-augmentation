@@ -17,7 +17,7 @@ checkpoint_codenames ={
         # 'advanced-mixed': "0e19c7c3f39c4f238bb6293b771d17fd",
         # 'trivial-heavy-mixed': "b19de997b67b4c21baa61ce8fe4722a9",
         # 'advanced-light-mixed': "6d6dcd8d53c343b2b2ae88dc140af753",
-        'advanced-light-dse-mixed': "8ed0e90f07404a87b6b13ed37d67b0e3",
+        # 'advanced-light-dse-mixed': "8ed0e90f07404a87b6b13ed37d67b0e3",
     },
     'FacebookAI/roberta-base':
     {
@@ -46,12 +46,16 @@ checkpoint_codenames ={
         # 'advanced-mixed': "622b1b8534a54f4fa400f1a5264b62e1",
         # 'trivial-heavy-mixed': "4df5a5164cfb478692a7a6ca6ebf153b",
         # 'advanced-light-mixed': "b5726bb95a7844c1a5bc54bc1678fd66",
-        # 'advanced-light-dse-mixed': "79a67d9022644dd788ff237a4e5da0fa"
+        'advanced-light-dse-mixed': "48e93c08f6484d0fb19d75a952e416b3"
     },
     'aws-ai/dse-bert-base':
     {
         # 'advanced-light-dse-mixed': "e82a8460c4c247958b0c5ec5a0bcfcf9",
-        # 'advanced-light-dse-mixed-cls': "edd298120d9b4fe6bab64dc9f5b3d939"
+        'advanced-light-dse-mixed': "419b505257e3447d8219272ea83c6d59"
+    },
+    'BAAI/bge-base-en-v1.5':
+    {
+        'advanced-light-dse-mixed': '3b02e4141f7f42c3946f571eeb34868c'
     }
 }
 

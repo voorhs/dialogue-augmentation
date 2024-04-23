@@ -51,3 +51,16 @@ class SelfAttentionPooling(nn.Module):
         res = (last_hidden_state * att_probs[..., None]).sum(dim=1)             # (B,H)
 
         return res
+
+
+class LastTokenPooling(nn.Module):
+    def forward(self, last_hidden_state, attention_mask):
+        """
+        last_hidden_state: (B,T,H)
+        attention_mask: (B,T), mask where 0 indicates tokens not to attend
+        return: (B,H)
+        """
+        sequence_lengths = attention_mask.sum(dim=1) - 1
+        batch_size = last_hidden_state.shape[0]
+        ids = torch.arange(batch_size, device=last_hidden_state.device)
+        return last_hidden_state[ids, sequence_lengths]
