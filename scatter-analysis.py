@@ -141,18 +141,22 @@ def cosine_analysis(ds_1, ds_2, model, aug, key):
         norm(orig_emb, axis=1) * norm(aug_emb, axis=1)
     )
 
+    res = {}
+
     mean = df_joined["cos"].mean()
     std = df_joined["cos"].std()
+
+    res['all'] = float(mean)
 
     n_services = len(sgd_labels)
 
     sns.histplot(df_joined, x="cos")
     plt.title(f"{model}/{aug}/All [mean={mean:.3f}, std={std:.3f}]")
 
-    folder = f"figures/{model}/cosine"
+    folder = f"figures/{model}/cosine/all"
     if not os.path.exists(folder):
         os.makedirs(folder)
-    fpath = os.path.join(folder, f"heap-{aug}.svg")
+    fpath = os.path.join(folder, f"{aug}.svg")
 
     plt.savefig(fpath, bbox_inches="tight")
     plt.close()
@@ -163,16 +167,22 @@ def cosine_analysis(ds_1, ds_2, model, aug, key):
         sub_df = df_joined[df_joined.services == service]
         mean = sub_df["cos"].mean()
         std = sub_df["cos"].std()
+        res[service] = float(mean)
         sns.histplot(sub_df, x="cos", ax=ax[i])
         ax[i].set_title(f"{service} [mean={mean:.3f}, std={std:.3f}]")
 
-    folder = f"figures/{model}"
+    folder = f"figures/{model}/cosine/classwise"
     if not os.path.exists(folder):
         os.makedirs(folder)
-    fpath = os.path.join(folder, f"classwise-{aug}.svg")
-
+    fpath = os.path.join(folder, f"{aug}.svg")
     plt.savefig(fpath, bbox_inches="tight")
     plt.close()
+
+    folder = f"figures/{model}/cosine/means"
+    if not os.path.exists(folder):
+        os.makedirs(folder)
+    dpath = os.path.join(folder, f"{aug}.json")
+    json.dump(res, open(dpath, 'w'))
 
 
 def aug_prediction(ds_list, model, aug, key, seed=0):
@@ -282,6 +292,3 @@ if __name__ == "__main__":
 
         df['all'] = pd.concat(list(df.values()), axis=0)
         visualize_pca(df['all'], model_key, 'all')
-
-        # dataset['all-augs'] = concatenate_datasets([dataset[aug] for aug in aug_list])
-        # cosine_analysis(dataset['orig'], dataset['all-augs'], model_key, 'all', key=args.key)
