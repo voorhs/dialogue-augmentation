@@ -21,9 +21,9 @@ The developed augmentations reflect some invariants inherent in conversational d
 ## Contrastive Fine-tuning
 
 A random augmentation is chosen on the fly idependently for each dialogue in a training batch. Then cotrastive loss is calculated
-$$
+```math
 \mathcal{L}=-\log\frac{\exp(\cos(x,y))}{\sum_z\exp(\cos(x,z))},
-$$
+```
 where x and y are the dialogue and its augmentation and "z"s are the other dialogues in a batch.
 
 ## Experiments
