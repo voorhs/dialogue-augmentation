@@ -1,364 +1,68 @@
-# Dialogue Augmentation
+# Contrastive Learning with Augmentations for Training Dialogue Embeddings
 
-Скрипты:
-- скрипты для DGAC кластеризации:
-    - `parse_multiwoz.py`
-    - `sentence_encoding.py`
-    - `dgac_clustering.py`
-- реализованные аугментации:
-    - `my_augmentations.py`
-    - `augmentation_development.ipynb`
-- скрипты для анализа intent similarity и edit similarity:
-    - `grid-search.py`
-    - `similarity_funtions.py`
-    - `visualization_utis.py`
-    - `similarity_analysis.ipynb`
+Vector representations derived from pre-trained language models have proven extremely effective for a variety of text-based tasks such as text pair classification, semantic similarity, and retrieval. Corresponding models are typically trained on large amounts of clean and diverse data using a contrastive loss. Unfortunately, there are no such datasets for the field of conversational systems. This paper describes the process of creating a synthetic set of dialogues using specially developed augmentations. A comparison was made of different augmentations in terms of the quality of knowledge transfer to tasks associated with dialogue systems.
 
-## Как сделать датасет
+## Dialogue Augmentations
 
-Контрастивный датасет для трейна диалогового энкодера:
-- `make_source_dataset.py` => `data/source/train/`, датасет из диалогов
-- `filter_dataset_by_length.py` => `data/misc/original-truncated/`, датасет с нанами на месте слишком длинных диалогов (`mode='null'`)
-- `make_augmentations.py` => `augmented/`, всевозможные аугментации трейна
-- `make_contrastive_dialogue_train_data.py` => `data/train/dialogue-encoder/contrastive/`
+Implemented [here](https://github.com/voorhs/dialogue-augmentation/tree/main/mylib/augmentations). You can see [demo](https://github.com/voorhs/dialogue-augmentation/tree/main/demo).
 
-Мультивоз датасет для service clf:
-- `make_multiwoz_dataset.py` => `data/misc/multiwoz22/`
-- `filter_dataset_by_length.py` => `data/train/dialogue-encoder/multiwoz22`, датасет с без слишком длинных диалогов (`mode='drop'`)
+The developed augmentations reflect some invariants inherent in conversational data. Therefore, it is fair to assume that a model adapted for working with dialogue should not produce significantly different vector representations of objects before and after augmentations. This provides some justification for the use of contrastive learning on dialogue augmentations as a procedure for adapting a language model to the domain of dialogue data.
 
+**Inserting tokens**. One simple but effective way to augment text is to lengthen it by inserting additional tokens. For this purpose, we added a special token \[MASK\] to random places in the dialogues and used a RoBERTa. The insertion is rejected if the token proposed by the model is only a subword, or if the prediction probability is below a manually selected threshold. To account for the context of the dialogue during token insertion, several consecutive dialogue utterances are fed into the input of the mask-filling model, as a compromise between feeding individual utterances and feeding the entire dialogue.
 
+**Replacing tokens**. This method is identical to the previous one, except that instead of adding a mask token, we replace some of the tokens.
 
-## Текущие мысли
+**Reverse translation**. Translation from an original language into another language and then back into the original language. Neural machine translation models were used for this purpose (`Helsinki-NLP/opus-mt-en-ru`).
 
-- `dice`-близость над `bag of nodes` хороша, но только в случае устойчивой кластеризации
-    - было [A] [label: 5] [name: cambridge, leaving, need]  My departure site is ~~Cambridge~~ please.
-    - стало [A] [label: 13] [name: centre, looking, town] My departure site is **Bend** please.
-    - было [A] [label: 14] [name: food, italian, restaurant] I would like modern ~~European~~ food.
-    - стало [A] [label: 0] [name: food, looking, restaurant] I would like modern **Asian** food.
-    - т.е. из-за смещения в данных, возник отдельный кластер про кембридж/италию и это сделало кластеризацию не инвариантной к фактической информации, по-моему нехорошо, что кластер меняется при том же интенте
-- `textattack` CLI
-    - медленный
-    - иногда непонятно какие модели он использует
-    - принимает на вход только csv (хотелось бы json)
-- с помощью замены синонимов можно генерить отрицательные примеры похожих диалогов, а с помощью добавления слов -- положительные
-- LLM можно использовать для dialogue completion для генерации положительных примеров (убрать часть реплик и попросить бота заполнить)
-- CLARE
-    - вообще отличный метод для генерации положительных примеров, потому что он был создан как раз чтобы генерить положительные примеры, причем максимально нетривиальные (чтобы взломать модель)
-    - но хотелось бы регулировать используемые трансформации, например, только вставки или любое другое подмножество, а не все сразу
-    - но в textattack он слишком медленный: для обработки корпуса придется ждать несколько дней
-    возможно нужно будет попробовать через api, мейби там есть какие-нибудь оптимизации или возможности для распараллеливания
-    - в идеале самому написать на торче
-- текущие итоги по `Inserter`
-    - модели:
-        - `microsoft/mpnet-base` отлично работает при `fill_utterance_level=2`, нетривиальные вставки, заодно даже немного взламывает кластеризацию
-        - `xlnet-base-cased` и `xlnet-large-cased` вставляет одни предлоги и наречия, в целом глупее (причем при любой стратегии заполнения)
-        - когда стоит использовать
-            - mpnet: если не жалко времени (он раза в два медленее xlnet) и умещается в контекст из двух уттерансов 
-            - xlnet: в остальных случаях
-    - fraction:
-        - если mpnet, то смело берем 0.5 и получаем отличные примеры
-        - иначе 0.3
-- как с помощью лламы аугментировать диалог:
-    - маскировать уттерансы и просить лламу заполнить маски так, чтобы они подходили под контекст диалога
-    - добавить маскированные уттерансы и попросить лламу заполнить их
-    - попросить придумать начало/конец диалога
-    - переписать диалог покороче/подлиннее
-    - **ничего не удалось, не работает как часы: то лишние комментарии генерит, то нарушает json структуру**
-    - **скорее всего нужно файнтюнить чтобы модель выдавала всегда одинаковый формат аутпута и лучше понимала что от нее требуют**
-    - **наиболее продвинутой версией файнтюна мне видится комбинирование файнтюна с jsonformer**
-- аугментация через шаффл:
-    - выделять блоки (параграфы) и шаффлить их, а не отдельные предложения
-    - например в мультивозе в одном диалоге часто речь сначала про ресторан а потом про такси, вот их можно шаффлить сто проц
-    - то есть можно к примеру кластеризовать все уттерансы в датасете, и использовать разметку для сегментации диалога на смысловые части
-    - можно посчитать попарные близости всех уттерансов в предложении и свапнуть пары самых близких
-    - одну реплику состоящую из нескольких предложений можно разбить на несколько, не забыв указать говорящего, и наоборот
+**Shuffling utterances**. Previous augmentation methods modify dialogue within a single utterance and are applicable to arbitrary text data. Changing the order of dialogue utterances is a stronger augmentation. To implement this idea, we propose use a model that measures the similarity between utterances in a dialogue. Using these similarities, it is possible to group utterances within each conversation using agglomerative clustering. Experiments have shown that these groups represent separate independent stages of dialogue that can be mixed with each other.
 
-## Детектить корректный порядок реплик в диалоге с помощью NSP моделей
+**Dialogue pruning**. Individual groups of dialogue utterances may be discarded, resulting in shortened dialogue with fewer utterances.
 
-План работы:
-- руками нагенерить шаффлы в диалогах: валидные и невалидные примеры
-- собрать все эти NSP модели:
-    - какие-нибудь с hf
-    - собрать NSP датасет из диалоговых датасетов и обучить бейзлайн
-- измерить NSP-скоры для сгенеренных шаффлов
+## Contrastive Fine-tuning
 
-Варианты NSP модели:
-- спуллить ConveRT эмбеддинг уттерансов и обучить бустинг/ff-block/rnn на бинарную классификацию (correct/meaningless)
-    - не забыть учесть спикера (обучить эмбеддинги для юзера и системы)
-    - варианты пуллинга: min, max, avg, attention
-- засунуть весь диалог в BiDeN и обучить CLS токен (или другая модель для dialogue modeling)
-- два энкодера: один для предшествующего уттеранса, второй для последующего, максимизировать скалярное произведение если два уттеранса последовательные
-    - энкодеры можно инициализировать из mpnet
-    - можно файнтюнить энкодеры, а можно обучить проекторы
-    - учесть контекст без дополнительного пересчета уттеранс-эмбеддингов можно так: считать выпуклую комбинацию текущего эмбеддинга и всех предыдущих
-- **предсказывать ранг каждого уттеранса по данному диалогу: дать на вход уттерансы без информации об их порядке и попросить его восстановить (сделать лосс как в ListNet):**
-    - каждый уттеранс кодируем мпнетом -> получили набор эмбеддингов
-    - этот набор воспринимаем как токены, подаем на вход транформеру
-    - хидден стейты с последнего слоя подаем в классификатор с одним выходом (это ранкер)
-    - выходы для текущей последовательности подаем в софтмакс и воспринимаем полученные вероятности как ранги
-    - применяем лосс из ListNet
-    - сейчас надо реализовать
-        - в уттеранс ранкере паддинг для батча из уттеранс эмбеддингов
-        - в трансформере нулевой аттеншен для паддингов
-        - прикинуть варианты распределения для `ranks_probs_true`
-    - возможно нужно не прибавлять эмбеддинг говорящего а конкатенировать маленький кусочек
-
-- кажется идеальным вариантом:
-    - взять байден (или другую модель для dialogue modeling), зафайнтюнить его таким образом, чтобы на уровне диалога аттеншен был только между cls токенами каждого уттеранса, а внутри каждого уттеранса обычный аттеншен
-    - закодить такую модель будет небыстро, поэтому сделать это стоит только после тестов над текущим вариантом уттеранс ранкера
-    - можно и без байдена!
-    - возьму MPNetModel из хф, подам в него тщательно задизайненую маску внимания, возможно в начало каждого уттеранса нужно добавить токен, отвечающий за говорящего
-
-## Дальнейшие планы по переходу с json chunks на hf dataset
-
-[x] реализовать natural join для аугментированных датасетов: `datasets.Dataset.to_parquet()` -> `pyarrow.Table.join()` -> `datasets.Dataset.from_parquet()` (получится hf-версия скрипта `make_contrastive_dialogue_train_data.py`)
-[x] сделать hf-версию для `filter_dataset_by_length.py`
-[x] сделать hf-версии для
-    [x] `train_dialogue_encoder.py`
-    [] ~~`train_listwise.py`~~
-    [x] `train_pairwise.py`
-[x] что все `train_*.py` работают:
-    [x] `train_pairwise.py`
-    [] `train_dialogue_encoder.py`
-[x] мигрировать на кластер
-[] обучить симметричный pairwise
-
-## Виды контрастив лоссов
-
-1d loss is equivalent to $p(y|x)p(x|y)$
+A random augmentation is chosen on the fly idependently for each dialogue in a training batch. Then cotrastive loss is calculated
 $$
--\log{\exp\cos(x,y)\over\sum_{\tilde y}\exp\cos(x,\tilde y)}-\log{\exp\cos(x,y)\over\sum_{\tilde x}\exp\cos(\tilde x,y)}
+\mathcal{L}=-\log\frac{\exp(\cos(x,y))}{\sum_z\exp(\cos(x,z))},
 $$
+where x and y are the dialogue and its augmentation and "z"s are the other dialogues in a batch.
 
-2d loss
-$$
--\log{\exp\cos(x,y)\over\sum_{\tilde x,\tilde y}\exp\cos(\tilde x,\tilde y)}
-$$
+## Experiments
 
-my proposal 0 (the first term from 1d loss)
-$$
--\log{\exp\cos(x,y)\over\sum_{\tilde y}\exp\cos(x,\tilde y)}
-$$
+All datasets are taken from the DialogStudio collection comprising about 433K dialogues. Batch size 128 on two A100 40GB, AdamW optimizer with weight_decay 1e-2 and fixed learning step 3e-6. We froze all layers of the transformer except the last three.
 
-my proposal 1
-$$
--\log{\exp\cos(x_i,y_i)\over\sum_{j=1,j\neq i}^B\exp\cos(x_i,y_j)+\exp\cos(x_j,y_i)}
-$$
+### Optimizing Augmentation Set
 
-my proposal 2
-$$
--\log\sigma(\cos(x_i,y_i))-\sum_{j=1,j\neq i}^B[\log\sigma(-\cos(x_i,y_j))+\log\sigma(-\cos(x_j,y_i))]
-$$
+![](readme_assets/augsets.png)
 
-add random swap between x and y to prevent learning grammatics
+Contrastive fine-tuning with augmentations provides an increase in quality for the original BERT weights. The smallest increase comes from a set of simplest augmentations at the token level: replacement and insertion. The best gains were achieved by the a-l-m and a-h-m augmentation sets. The a-l-m-dse set has the least complexity to implement and does not require training an auxiliary model. At the same time, for BERT, the resulting metrics have a large gap with the metrics of trivial augmentations, and a small gap with the metrics of heavy a-h-m augmentations. Therefore, in the following experiments, a set of augmentations a-l-m-dse is used as a compromise between the quality
+versatility and complexity of implementation.
 
-я вижу так:
-- последним двум лоссам можно поставить в соответствие конкретное вероятностное распределение к которому ведет шаг оптимизации
-- но последние два лосса возможно сильно делают объекты в батче зависимыми, при том что очев батч случайный
+Contrastive fine-tuning with augmentations does not provide an increase in quality for initialization from RetroMAE weights. For all evaluation scenarios, the metrics drop.
 
-## Try Yourself
+### Scatter of Embeddings
 
-### Setup Environment
+![](readme_assets/scatter-bert.png)
 
-python 3.8.10
-```bash
-pip install -r requirements
-```
+![](readme_assets/scatter-retromae.png)
 
-you can install specific python version with [pyenv](https://github.com/pyenv/pyenv?tab=readme-ov-file#automatic-installer):
-```bash
-sudo apt update
-sudo apt install \
-    build-essential \
-    curl \
-    libbz2-dev \
-    libffi-dev \
-    liblzma-dev \
-    libncursesw5-dev \
-    libreadline-dev \
-    libsqlite3-dev \
-    libssl-dev \
-    libxml2-dev \
-    libxmlsec1-dev \
-    llvm \
-    make \
-    tk-dev \
-    wget \
-    xz-utils \
-    zlib1g-dev
-curl https://pyenv.run | bash
-```
+### Invariance Analysis
 
-Train dialogue encoder (domain benchmark as validation)
-```bash
-python3 train_baseline_dialogue_encoder.py \
---hf-model google-bert/bert-base-uncased \
---contrastive-path data/train-bert-base-uncased/trivial/ \
---multiwoz-path data/benchmarks-bert-base-uncased/multiwoz \
---bitod-path data/benchmarks-bert-base-uncased/bitod \
---sgd-path data/benchmarks-bert-base-uncased/sgd \
---cuda "0,1" \
---logger comet \
-# --mode max \
---pooling cls \
-# --metric-for-checkpoint multiwoz/logreg_accuracy \
---batch-size 128 \
---finetune-layers 3 \
---name trivial
-```
+![](readme_assets/invariance.png)
 
-Train pairwise model
-```bash
-python3 train_pairwise.py --cuda 0 --logger tb --mode max --metric-for-checkpoint val_loss --batch-size 256 --finetune-layers 3
-```
+The ability of models to capture dialogue invariants is investigated. To do this, for each vectorization model, several simpler models were trained for the classification task, in which the label is what augmentation was performed on the dialogue, including the absence of augmentations. The results are presented in Table 4. After additional training with various initializations, it is possible to predict the type of augmentation with less accuracy, which can be due to two non-mutually exclusive reasons: 1) the model acquires invariance to augmentations, which indicates its adaptation to dialogue data, 2) the general ability of this model to understand the language has deteriorated. However, the second reason is inconsistent with the fact that stronger encoders like DSE and BGE have even lower quality of augmentation prediction, especially with metric methods.
 
-### Algorithm
+Additionally, it is worth noting that the stronger the encoder in general for texts, the less accurate it is at predicting augmentation.
 
-1. make_source_dataset.py
-2. make_augmentations.py
-3. make_contrastive.py
-4. filter_dataset_by_length.py both for contrastive and multiwoz
-5. train_dialogue_encoder.py
+### Hidden States Analysis
 
-### Aug Sets
+![](readme_assets/hidden-states.png)
 
-Набор 1 (trivial):
+Additionally, we examined the quality of augmentation prediction using vector representation taken from earlier layers. The results are presented in Table 5. It turned out that the quality of prediction drops sharply in the last layer, especially after contrastive fine-tuning with augmentations. In other words, the last layers try to obtain representations that are more invariant to augmentations and, as a result, adapt the model to the data.
 
-- back-translate
-- insert
-- replace
+## Conclusion
 
-Набор 2 (advanced):
+A study of neural network vector representations for task-oriented dialogues was carried out. A procedure for contrastive learning with augmentations is proposed. The effectiveness of this procedure has been demonstrated for BERT-like models in tasks such as dialogue classification, dialogue clustering, dialogue retrieval, and intent prediction. An ablation study was conducted showing the contribution of different augmentations to the quality of the final model. Together with additional research on encoder invariance to augmentations, the following conclusions can be drawn:
+- general purpose encoders available today are quite well adapted to conversational data;
+- contrastive learning with augmentations is a fairly cheap procedure for obtaining embeddings adapted to a given data domain.
 
-- back-translate
-- insert
-- replace
-- shuffle
-- prune
-
-Набор 3 (crazy):
-
-- back-translate
-- insert
-- replace
-- shuffle
-- prune
-- back-translate-prune
-- shuffle-insert
-- shuffle-replace
-- prune-insert
-- prune-replace
-
-## Веса
-
-- Fair
-    - BERT
-        - trivial ba6388e710684d94af81ebab88c2ff5a
-        - advanced 0d0b24e2d3864cf8a6c8b7d5e15b1c83
-        - crazy d7e24b7b434e486d866f35d70ac0c503
-    - RoBERTa
-        - trivial e4fa2d98923e4c8ca4fbe20c7ccc4c67
-        - advanced 849fa15859484683a4341837e7d1dd1d
-        - crazy 523da04c3c5a41379acc298ee09c7a0a
-    - RetroMAE
-        - trivial 408af9ac5d114a9da1fa007277343f15
-        - advanced e2de548066f14753bdf9a646e992c02f
-        - crazy ca66a8cd07c4418daea805093d00cdd3
-- Unair
-    - BERT
-        - trivial 32118387351f4edf85d85582058e99ca
-        - advanced 38b54997a8704482b53f3935df110162
-        - crazy 07045f26f4554abc98058a25c1114f71
-    - RoBERTa
-        - trivial 115f79b06edc485e9477cffdf52d3293
-        - advanced e53f956ef0b5438094847ad06d2d374a
-        - crazy ecf6a3d7ae5a4293bd12171794b09a0f
-    - RetroMAE
-        - trivial 7b2d20d36b6c41778ac6ac44c13cac66
-        - advanced abcf0e71cb7347db8726cf2f119939bf
-        - crazy 739a35638b8e4031b747c99954d952f8
-
-## Результаты скоринга
-
-Имеются замеренные бенчмарки:
-- для моделей BERT, RoBERTA, RetroMAE
-- для сетов trivial, advanced, crazy
-- для сетов fair, unfair
-- для эпох 0 1 2 3 4
-- бенчмарки multiclass, multilabel
-
-Замеры для бейзлайнов:
-- raw: без контрастивного обучения (CL), просто претрейненные веса
-- halves: CL, где положительная пара получена путём деления одного диалога на две части
-
-В будущем:
-- бенчмарк downstream classification
-- бенчмарк MTEB (?)
-- разные виды CL: symmetric, cross, bce (?)
-- добавить дропаут над эмбедингом в качестве аугментации (?)
-
-## Сравнение
-
-Эксперимент 1:
-- для каждой модели (BERT/RoBERTa/RetroMAE)
-- для последней эпохи (или в среднем для всех эпох)
-- для fair
-- сравнить сеты raw, halves, trivial, advanced, crazy
-- на бенчмарках multiclass, multilabel
-- оптимистическая гипотеза: raw < halves < trivial < advanced
-
-Эксперимент 2:
-- для каждой модели
-- для последней эпохи
-- выбрать лучший сет среди raw, halves и тд
-- сравнить fair и unfair
-- на бенчмарках multiclass, multilabel
-- оптимистическая гипотеза: fair дает не сильно хуже качество
-
-Эксперимент 3:
-- для каждой модели
-- для лучшего сета
-- сравнить эпохи
-- на бенчмарках multiclass, multilabel
-- оптимистическая гипотеза: существует оптимальное число эпох без переобучения и со значительным приростом относительно raw и halves
-
-Эксперимент 4:
-- для лучшего сета
-- для последней эпохи
-- для fair
-- сравнить все модели до и после CL 
-- на бенчмарках multiclass, multilabel
-- оптимистическая гипотеза: худшая модель после обучения не хуже чем лучшая модель до обучения
-
-## Бенчмарки которые стоит смотреть
-
-- ~~Классификационные метрики~~ все уходят в 1
-- Кластеризационные и ретривные метрики только для сравнения с необученной моделью
-- мультилейбл метрики вообще в мусорку
-- downstream classification еще не смотрел но скорее всего так же плохо будет
-
-Идеи диалоговых бенчмарков:
-- бенчмарки егора
-- синтезировать pair binary clf dataset c помощью LLM
-- mteb на plain text
-
-## Аугментации
-
-Без вспомогательной модели:
-- halves
-- dropout
-
-Trivial легкий:
-- insert
-- replace
-
-Trivial тяжелый:
-- insert
-- replace
-- back-translate
-
-Advanced:
-- prune
-- shuffle
-- +trivial
-
+Further research may involve more fine-tuning of the training procedure in terms of selecting hyperparameters, since this work was not able to surpass the quality of existing models.
